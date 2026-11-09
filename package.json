@@ -1,0 +1,20 @@
+{
+  "name": "noor",
+  "version": "1.0.0",
+  "description": "منصة نور لرفع الفحوصات الطبية ومشاركتها",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "reset": "rm -rf data"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "dicom-parser": "^1.8.21",
+    "express": "^4.22.3",
+    "multer": "^1.4.5-lts.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
