@@ -16,7 +16,7 @@ ar: {
   'land.cta': 'أنشئ حسابك مجاناً', 'land.trust': 'روابط مشفرة، ورمز دخول، وصلاحية محددة، وسجل لكل من فتح ملفك',
   'land.mock1': 'أشعة رنين مغناطيسي', 'land.mock2': 'تحليل دم شامل', 'land.mock3': 'تقرير الطبيب',
   'land.mockShare': 'تمت المشاركة مع د. خالد',
-  'land.f1t': 'ارفع أي فحص', 'land.f1d': 'ملفات PDF والصور وأشعة DICOM والفيديو، في ملف واحد منظم.',
+  'land.f1t': 'ارفع أي فحص',
   'land.f2t': 'شارك عبر واتساب والبريد', 'land.f2d': 'رابط آمن برمز دخول يصل لطبيبك أو للمركز الصحي في ثوانٍ.',
   'land.f3t': 'عارض أشعة مدمج', 'land.f3d': 'افتح صور DICOM في المتصفح مع التكبير والتحكم بالتباين، دون أي برامج.',
   'land.f4t': 'ملاحظات الطبيب', 'land.f4d': 'يكتب الطبيب الموثّق قراءته على الفحص وتصلك فوراً.',
@@ -56,7 +56,6 @@ ar: {
   'files.deleted': 'تم حذف الملف',
 
   'up.title': 'رفع فحص طبي', 'up.drop': 'اسحب الملفات هنا أو اضغط للاختيار',
-  'up.types': 'PDF، JPG، PNG، DICOM (.dcm)، MP4، MOV، بحد أقصى 500MB للملف',
   'up.titlePh': 'مثال: أشعة الركبة اليمنى', 'up.centerPh': 'اختر أو اكتب اسم المركز', 'up.submit': 'رفع',
   'up.done': 'تم رفع {n} ملف', 'up.skipped': 'تم تجاهل بعض الملفات لأن نوعها غير مدعوم',
 
@@ -146,6 +145,37 @@ ar: {
   'err.doctor_not_found': 'الطبيب غير متاح', 'err.center_not_found': 'المركز غير موجود', 'err.self_action': 'لا يمكنك تنفيذ هذا على حسابك',
   'err.file_too_large': 'حجم الملف أكبر من المسموح', 'err.upload_error': 'فشل رفع الملف', 'err.unauthorized': 'يرجى تسجيل الدخول',
   'err.forbidden': 'ليست لديك صلاحية', 'err.locked': 'تم قفل الرابط', 'err.wrong_pin': 'رمز غير صحيح',
+
+  'land.f1d': 'ملفات PDF والصور وأشعة DICOM والفيديو، تُضغط تلقائياً دون التأثير على جودتها.',
+  'up.types': 'PDF، JPG، PNG، أشعة DICOM، MP4، MOV، بحد أقصى 500MB للملف. تُضغط الصور والفيديو تلقائياً مع الحفاظ على الجودة.',
+  'up.folder': 'رفع مجلد أشعة كامل', 'up.folderSub': 'مثل محتوى قرص الأشعة من المستشفى (CT / MRI)',
+  'up.review': 'راجع الملفات قبل الرفع', 'up.reviewCount': '{n} عنصر جاهز للرفع',
+  'up.terms': 'أوافق على {link} وأقرّ بأن هذه الملفات تخصني أو مخوَّل برفعها.', 'up.termsLink': 'شروط الاستخدام وسياسة الخصوصية',
+  'up.approve': 'موافق، ارفع', 'up.remove': 'إزالة', 'up.nFiles': '{n} ملف', 'up.dicomStudy': 'دراسة أشعة DICOM',
+  'up.unsupported': 'نوع غير مدعوم', 'up.uploading': 'جارٍ الرفع…', 'up.finish': 'تم',
+  'up.noteDone': 'تم الرفع بنجاح', 'up.noteVideo': 'تم الرفع، وجارٍ ضغط الفيديو على الخادم',
+  'up.noteDicom': 'تم الرفع: «{title}» ({n} مقطع)', 'up.noteSaved': 'تم الرفع وضغط الصورة: {from} ← {to} (وفّرنا {pct}%)',
+  'up.noteSkipped': 'تم تجاهل {n} ملف ليس صورة أشعة', 'up.summary': 'تم رفع {ok} من {total} بنجاح',
+  'up.videoProcessing': 'يجري ضغط الفيديو، وستصلك رسالة عند انتهائه',
+  'files.slices': '{n} مقطع', 'files.compressing': 'جارٍ ضغط الفيديو…', 'files.videoReady': 'اكتمل ضغط «{title}»',
+  'files.saved': 'تم تقليل الحجم {pct}%',
+  'viewer.scroll': 'تصفح', 'viewer.slice': 'مقطع', 'viewer.loadingSlices': 'تحميل المقاطع',
+  'viewer.seriesHint': 'استخدم عجلة الفأرة أو اسحب للأعلى والأسفل للتنقل بين المقاطع',
+  'err.terms_required': 'يجب الموافقة على الشروط قبل الرفع',
+  'act.admin_login': 'دخول لوحة الإدارة', 'act.terms_accepted': 'الموافقة على الشروط',
+  'adminLogin.docTitle': 'نور | دخول الإدارة', 'adminLogin.title': 'لوحة إدارة نور', 'adminLogin.sub': 'هذه الصفحة مخصصة لمديري المنصة فقط',
+  'adminLogin.password': 'كلمة المرور', 'adminLogin.submit': 'دخول آمن', 'adminLogin.demo': 'استخدام حساب الأدمن التجريبي',
+  'adminLogin.back': 'العودة إلى الموقع',
+  'terms.title': 'شروط الاستخدام وسياسة الخصوصية', 'terms.updated': 'آخر تحديث: نوفمبر 2026',
+  'terms.draft': 'هذا نص مبدئي للنموذج الأولي، ويجب مراجعته من مختص قانوني قبل الإطلاق.',
+  'terms.body': `
+    <h2>1. عن المنصة</h2><p>نور منصة لحفظ الفحوصات الطبية ومشاركتها. لا تقدم نور تشخيصاً طبياً، والملاحظات التي يكتبها الأطباء هي مسؤولية كاتبها.</p>
+    <h2>2. ملفاتك ملكك</h2><p>تبقى ملكية جميع الملفات التي ترفعها لك. ارفع فقط الملفات التي تخصك أو المخوَّل برفعها، وتستطيع حذفها في أي وقت.</p>
+    <h2>3. معالجة الملفات</h2><p>لتوفير المساحة نضغط الصور والفيديو تلقائياً بجودة عالية مع الحفاظ على الأبعاد الأصلية، ونزيل من الصور بيانات الموقع الجغرافي. لا تُضغط صور الأشعة (DICOM) أبداً.</p>
+    <h2>4. المشاركة</h2><p>لا يطّلع أحد على ملفاتك إلا من تشاركها معه. لكل مشاركة رابط خاص ورمز دخول ومدة صلاحية، ويمكنك إلغاؤها في أي وقت، ويُسجَّل كل وصول إليها وتستطيع الاطلاع عليه.</p>
+    <h2>5. الأطباء</h2><p>نتحقق من رخصة كل طبيب قبل ظهوره للمرضى، ولا يرى الطبيب إلا الفحوصات التي شاركتها معه خلال مدة صلاحيتها.</p>
+    <h2>6. الإدارة</h2><p>يستطيع مديرو المنصة رؤية بيانات الحسابات وسجل النشاط لحماية المنصة، ولا يفتحون محتوى ملفاتك الطبية.</p>
+    <h2>7. الأمان</h2><p>حافظ على سرية كلمة المرور ورموز المشاركة، وأبلغنا فوراً عند الاشتباه بأي استخدام غير مصرح به لحسابك.</p>`,
 },
 
 en: {
@@ -164,7 +194,7 @@ en: {
   'land.cta': 'Create a free account', 'land.trust': 'Encrypted links, access codes, set expiry dates, and a log of everyone who opens your files',
   'land.mock1': 'MRI scan', 'land.mock2': 'Complete blood panel', 'land.mock3': 'Doctor report',
   'land.mockShare': 'Shared with Dr. Khalid',
-  'land.f1t': 'Upload any exam', 'land.f1d': 'PDFs, images, DICOM scans and video, organized in one record.',
+  'land.f1t': 'Upload any exam',
   'land.f2t': 'Share via WhatsApp & email', 'land.f2d': 'A secure, PIN-protected link reaches your doctor or clinic in seconds.',
   'land.f3t': 'Built-in imaging viewer', 'land.f3d': 'Open DICOM images in the browser with zoom and contrast control, no extra software needed.',
   'land.f4t': 'Doctor notes', 'land.f4d': 'Verified doctors write their reading on the exam and you get it instantly.',
@@ -204,7 +234,6 @@ en: {
   'files.deleted': 'File deleted',
 
   'up.title': 'Upload medical exam', 'up.drop': 'Drop files here or click to browse',
-  'up.types': 'PDF, JPG, PNG, DICOM (.dcm), MP4, MOV, up to 500MB per file',
   'up.titlePh': 'e.g. Right knee X-ray', 'up.centerPh': 'Pick or type a center', 'up.submit': 'Upload',
   'up.done': '{n} file(s) uploaded', 'up.skipped': 'Some files were skipped (unsupported type)',
 
@@ -294,5 +323,36 @@ en: {
   'err.doctor_not_found': 'Doctor unavailable', 'err.center_not_found': 'Center not found', 'err.self_action': 'You can’t do this to your own account',
   'err.file_too_large': 'File is too large', 'err.upload_error': 'Upload failed', 'err.unauthorized': 'Please sign in',
   'err.forbidden': 'You don’t have permission', 'err.locked': 'Link locked', 'err.wrong_pin': 'Wrong code',
+
+  'land.f1d': 'PDFs, images, DICOM scans and video, compressed automatically without losing quality.',
+  'up.types': 'PDF, JPG, PNG, DICOM scans, MP4, MOV, up to 500MB per file. Images and video are compressed automatically without losing quality.',
+  'up.folder': 'Upload a full scan folder', 'up.folderSub': 'e.g. the contents of a hospital imaging CD (CT / MRI)',
+  'up.review': 'Review before uploading', 'up.reviewCount': '{n} item(s) ready',
+  'up.terms': 'I agree to the {link} and confirm these files are mine or I’m authorized to upload them.', 'up.termsLink': 'Terms of Use and Privacy Policy',
+  'up.approve': 'Approve & upload', 'up.remove': 'Remove', 'up.nFiles': '{n} files', 'up.dicomStudy': 'DICOM imaging study',
+  'up.unsupported': 'Unsupported type', 'up.uploading': 'Uploading…', 'up.finish': 'Done',
+  'up.noteDone': 'Uploaded successfully', 'up.noteVideo': 'Uploaded; the video is being compressed on the server',
+  'up.noteDicom': 'Uploaded “{title}” ({n} slices)', 'up.noteSaved': 'Uploaded and compressed: {from} → {to} ({pct}% smaller)',
+  'up.noteSkipped': '{n} non-image file(s) skipped', 'up.summary': '{ok} of {total} uploaded successfully',
+  'up.videoProcessing': 'The video is being compressed; you’ll be notified when it’s done',
+  'files.slices': '{n} slices', 'files.compressing': 'Compressing video…', 'files.videoReady': '“{title}” finished compressing',
+  'files.saved': '{pct}% smaller',
+  'viewer.scroll': 'Scroll', 'viewer.slice': 'Slice', 'viewer.loadingSlices': 'Loading slices',
+  'viewer.seriesHint': 'Use the mouse wheel or drag up and down to move between slices',
+  'err.terms_required': 'Please accept the terms before uploading',
+  'act.admin_login': 'Admin sign-in', 'act.terms_accepted': 'Accepted terms',
+  'adminLogin.docTitle': 'Noor | Admin sign-in', 'adminLogin.title': 'Noor Admin', 'adminLogin.sub': 'This page is for platform administrators only',
+  'adminLogin.password': 'Password', 'adminLogin.submit': 'Secure sign-in', 'adminLogin.demo': 'Use the demo admin account',
+  'adminLogin.back': 'Back to the site',
+  'terms.title': 'Terms of Use & Privacy Policy', 'terms.updated': 'Last updated: November 2026',
+  'terms.draft': 'This is a draft for the prototype and must be reviewed by a legal professional before launch.',
+  'terms.body': `
+    <h2>1. About Noor</h2><p>Noor stores and shares medical records. Noor does not provide medical diagnosis; notes written by doctors are their author’s responsibility.</p>
+    <h2>2. Your files are yours</h2><p>You keep ownership of everything you upload. Only upload files that are yours or that you’re authorized to upload, and you can delete them at any time.</p>
+    <h2>3. File processing</h2><p>To save space, images and videos are compressed automatically at high quality while keeping their original dimensions, and location data is removed from photos. DICOM scans are never compressed.</p>
+    <h2>4. Sharing</h2><p>Only people you share with can see your files. Each share has a private link, an access code and an expiry date; you can revoke it at any time, and every access is logged for you to review.</p>
+    <h2>5. Doctors</h2><p>We verify every doctor’s license before patients can find them. Doctors only see exams you share with them, while the share is active.</p>
+    <h2>6. Administration</h2><p>Platform admins can see account details and activity logs to protect the platform; they do not open your medical files.</p>
+    <h2>7. Security</h2><p>Keep your password and share codes private, and tell us immediately if you suspect unauthorized use of your account.</p>`,
 },
 };

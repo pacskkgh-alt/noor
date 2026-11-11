@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const store = require('./lib/store');
+const media = require('./lib/media');
 
 const { db, save, uid, UPLOADS } = store;
 const app = express();
@@ -51,27 +52,60 @@ function shareKey(share) {
 function shareActive(s) {
   return !s.revoked && new Date(s.expiresAt) > new Date();
 }
-function fileKind(name, mime) {
-  const ext = path.extname(name).toLowerCase();
-  if (ext === '.pdf') return 'pdf';
-  if (['.dcm', '.dicom'].includes(ext) || mime === 'application/dicom') return 'dicom';
-  if (['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)) return 'image';
-  if (['.mp4', '.webm', '.mov', '.m4v'].includes(ext)) return 'video';
-  return null;
+function storedPath(name) { return path.join(UPLOADS, name); }
+function sendStoredFile(req, res, file, download) {
+  // دراسة أشعة متعددة المقاطع: تحميلها كاملة كملف ZIP، أو عرض مقطع محدد
+  if (file.slices && file.slices.length > 1) {
+    if (download) {
+      const pad = String(file.slices.length).length;
+      const base = (file.title || 'study').replace(/[\\/:*?"<>|]/g, '_');
+      return media.sendZip(res, file.slices.map((n, i) => ({ name: `${base}/${String(i + 1).padStart(pad, '0')}.dcm`, path: storedPath(n) })), base + '.zip');
+    }
+    const i = Math.min(Math.max(parseInt(req.query.slice, 10) || 0, 0), file.slices.length - 1);
+    return sendPath(res, storedPath(file.slices[i]), 'application/dicom', `${i + 1}.dcm`, false);
+  }
+  const type = file.kind === 'dicom' ? 'application/dicom' : file.kind === 'pdf' ? 'application/pdf' : (file.mime || 'application/octet-stream');
+  sendPath(res, storedPath(file.storedName), type, file.originalName, download);
 }
-const MIME = { pdf: 'application/pdf', dicom: 'application/dicom' };
-function sendStoredFile(res, file, download) {
-  const p = path.join(UPLOADS, file.storedName);
+function sendPath(res, p, type, name, download) {
   if (!fs.existsSync(p)) return res.status(404).json({ error: 'not_found' });
-  const type = MIME[file.kind] || file.mime || 'application/octet-stream';
-  const disp = download ? 'attachment' : 'inline';
-  res.setHeader('Content-Disposition', `${disp}; filename*=UTF-8''${encodeURIComponent(file.originalName)}`);
+  res.setHeader('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(name)}`);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Cache-Control', 'private, no-store');
   res.sendFile(p, { headers: { 'Content-Type': type } });
 }
 function removeFileFromDisk(file) {
-  try { fs.unlinkSync(path.join(UPLOADS, file.storedName)); } catch {}
+  for (const n of (file.slices || [file.storedName])) { try { fs.unlinkSync(storedPath(n)); } catch {} }
+}
+function unlinkQuiet(p) { try { fs.unlinkSync(p); } catch {} }
+
+// ---------- طابور ضغط الفيديو (ملف واحد في كل مرة) ----------
+const videoQueue = [];
+let videoBusy = false;
+function enqueueVideo(id) { videoQueue.push(id); runVideoQueue(); }
+async function runVideoQueue() {
+  if (videoBusy || !videoQueue.length) return;
+  videoBusy = true;
+  const id = videoQueue.shift();
+  const f = db.files.find(x => x.id === id);
+  try {
+    if (f && f.processing) {
+      const r = await media.compressVideo(UPLOADS, f.storedName);
+      const still = db.files.find(x => x.id === f.id);
+      if (r && still) {
+        unlinkQuiet(storedPath(still.storedName));
+        Object.assign(still, { storedName: r.storedName, size: r.size, originalSize: r.originalSize, mime: r.mime, originalName: still.originalName.replace(/\.[^.]+$/, '') + '.mp4' });
+      } else if (r) unlinkQuiet(storedPath(r.storedName));
+      if (still) still.processing = false;
+      save();
+    }
+  } catch (e) {
+    console.error('video compression error', e);
+    if (f) { f.processing = false; save(); }
+  } finally {
+    videoBusy = false;
+    runVideoQueue();
+  }
 }
 
 // ---------- الجلسات ----------
@@ -103,11 +137,11 @@ const upload = multer({
     destination: UPLOADS,
     filename: (req, f, cb) => cb(null, crypto.randomBytes(16).toString('hex') + path.extname(f.originalname).toLowerCase()),
   }),
-  limits: { fileSize: 500 * 1024 * 1024, files: 20 },
+  limits: { fileSize: 500 * 1024 * 1024, files: 3000 },
   fileFilter: (req, f, cb) => {
     // multer يقرأ أسماء الملفات بترميز latin1 — نعيدها إلى UTF-8 حتى تظهر الأسماء العربية
     f.originalname = Buffer.from(f.originalname, 'latin1').toString('utf8');
-    cb(null, !!fileKind(f.originalname, f.mimetype));
+    cb(null, true); // يُتحقق من النوع بعد الحفظ (بعض ملفات الأشعة بلا امتداد)
   },
 });
 
@@ -127,10 +161,11 @@ app.post('/api/auth/register', upload.single('license'), (req, res) => {
     createdAt: new Date().toISOString(),
   };
   if (role === 'doctor') {
-    if (!specialty || !licenseNumber || !req.file) { cleanup(); return res.status(400).json({ error: 'doctor_fields' }); }
+    const lk = req.file && media.detectKind(req.file.path, req.file.originalname);
+    if (!specialty || !licenseNumber || !req.file || !['pdf', 'image'].includes(lk)) { cleanup(); return res.status(400).json({ error: 'doctor_fields' }); }
     user.doctor = {
       specialty, licenseNumber, verification: 'pending',
-      licenseFile: { storedName: req.file.filename, originalName: req.file.originalname, mime: req.file.mimetype, kind: fileKind(req.file.originalname, req.file.mimetype) },
+      licenseFile: { storedName: req.file.filename, originalName: req.file.originalname, mime: req.file.mimetype, kind: lk },
     };
   }
   db.users.push(user);
@@ -140,20 +175,26 @@ app.post('/api/auth/register', upload.single('license'), (req, res) => {
   res.json({ user: publicUser(user) });
 });
 
-app.post('/api/auth/login', (req, res) => {
+function handleLogin(adminOnly) {
+  return (req, res) => {
   const { email, password } = req.body || {};
   const u = db.users.find(x => x.email === String(email || '').trim().toLowerCase());
-  if (!u || !checkPassword(String(password || ''), u.passwordHash)) {
+  // الأدمن يدخل من صفحته الخاصة فقط، ولا يدخل غيره منها
+  const wrongDoor = u && (adminOnly ? u.role !== 'admin' : u.role === 'admin');
+  if (!u || wrongDoor || !checkPassword(String(password || ''), u.passwordHash)) {
     log(req, u ? u.id : null, 'login_failed', { email });
     save();
     return res.status(401).json({ error: 'invalid_credentials' });
   }
   if (u.status !== 'active') return res.status(403).json({ error: 'account_suspended' });
   startSession(res, u);
-  log(req, u.id, 'login');
+  log(req, u.id, adminOnly ? 'admin_login' : 'login');
   save();
   res.json({ user: publicUser(u) });
-});
+  };
+}
+app.post('/api/auth/login', handleLogin(false));
+app.post('/api/admin/login', handleLogin(true));
 
 app.post('/api/auth/logout', (req, res) => {
   const sid = parseCookies(req).noor_sid;
@@ -189,32 +230,88 @@ function canAccessFile(user, file) {
   return false;
 }
 function fileWithExtras(f) {
-  return { ...f, notesCount: db.notes.filter(n => n.fileId === f.id).length };
+  const { slices, ...rest } = f;
+  return { ...rest, sliceCount: slices ? slices.length : 1, notesCount: db.notes.filter(n => n.fileId === f.id).length };
 }
 
 app.get('/api/files', auth('patient'), (req, res) => {
   res.json({ files: db.files.filter(f => f.ownerId === req.user.id).map(fileWithExtras) });
 });
 
-app.post('/api/files', auth('patient'), upload.array('files', 20), (req, res) => {
-  const { title, category, examDate, center, notes } = req.body;
-  if (!req.files || !req.files.length) return res.status(400).json({ error: 'no_files' });
-  const created = req.files.map(f => {
-    const file = {
-      id: uid(), ownerId: req.user.id,
-      title: (req.files.length === 1 && title) ? title : (title ? `${title} — ${f.originalname}` : f.originalname),
-      category: ['imaging', 'lab', 'report', 'prescription', 'other'].includes(category) ? category : 'other',
-      examDate: examDate || '', center: center || '', notes: notes || '',
-      originalName: f.originalname, storedName: f.filename, mime: f.mimetype,
-      size: f.size, kind: fileKind(f.originalname, f.mimetype),
-      createdAt: new Date().toISOString(),
-    };
-    db.files.push(file);
-    log(req, req.user.id, 'file_uploaded', { fileId: file.id, title: file.title });
-    return file;
-  });
-  save();
-  res.json({ files: created.map(fileWithExtras) });
+app.post('/api/files', auth('patient'), upload.array('files', 3000), async (req, res, next) => {
+  const uploaded = req.files || [];
+  try {
+    const { title, category, examDate, center, notes, acceptTerms } = req.body;
+    // الموافقة على الشروط مطلوبة قبل أول رفع
+    if (!req.user.termsAcceptedAt) {
+      if (acceptTerms !== '1') { uploaded.forEach(f => unlinkQuiet(f.path)); return res.status(400).json({ error: 'terms_required' }); }
+      req.user.termsAcceptedAt = new Date().toISOString();
+      log(req, req.user.id, 'terms_accepted');
+    }
+    if (!uploaded.length) return res.status(400).json({ error: 'no_files' });
+
+    const skipped = [], singles = [], dicoms = [];
+    for (const f of uploaded) {
+      const kind = media.detectKind(f.path, f.originalname);
+      if (!kind) { unlinkQuiet(f.path); skipped.push({ name: f.originalname, reason: 'unsupported' }); continue; }
+      if (kind === 'dicom') {
+        const meta = media.readDicomMeta(f.path);
+        if (!meta) { unlinkQuiet(f.path); skipped.push({ name: f.originalname, reason: 'not_image' }); continue; }
+        dicoms.push({ f, meta, name: f.originalname });
+      } else singles.push({ f, kind });
+    }
+
+    // تجميع صور الأشعة حسب السلسلة: كل سلسلة = بطاقة واحدة
+    const series = new Map();
+    for (const d of dicoms) {
+      if (!series.has(d.meta.seriesUID)) series.set(d.meta.seriesUID, []);
+      series.get(d.meta.seriesUID).push(d);
+    }
+    const total = singles.length + series.size;
+    const now = new Date().toISOString();
+    const cat = ['imaging', 'lab', 'report', 'prescription', 'other'].includes(category) ? category : 'other';
+    const nameFor = fallback => (total === 1 && title) ? title : (title ? `${title} — ${fallback}` : fallback);
+    const created = [];
+
+    for (const { f, kind } of singles) {
+      const file = {
+        id: uid(), ownerId: req.user.id, title: nameFor(f.originalname), category: cat,
+        examDate: examDate || '', center: center || '', notes: notes || '',
+        originalName: f.originalname, storedName: f.filename, mime: media.MIME[path.extname(f.filename)] || f.mimetype,
+        size: f.size, originalSize: f.size, kind, createdAt: now,
+      };
+      if (kind === 'image') {
+        try { const r = await media.compressImage(UPLOADS, f.filename, f.originalname); if (r) Object.assign(file, r); }
+        catch (e) { console.error('image compression skipped:', e.message); }
+      }
+      if (kind === 'video') file.processing = media.hasFfmpeg;
+      created.push(file);
+    }
+    for (const items of series.values()) {
+      media.sortSlices(items);
+      const m = items[0].meta;
+      const label = [m.modality, m.seriesDescription].filter(Boolean).join(' ') || items[0].name;
+      const sd = m.studyDate.length === 8 ? `${m.studyDate.slice(0, 4)}-${m.studyDate.slice(4, 6)}-${m.studyDate.slice(6)}` : '';
+      const size = items.reduce((a, d) => a + d.f.size, 0);
+      created.push({
+        id: uid(), ownerId: req.user.id, title: nameFor(label), category: 'imaging',
+        examDate: examDate || sd, center: center || '', notes: notes || '',
+        originalName: items.length > 1 ? `${label}.zip` : items[0].name,
+        storedName: items[0].f.filename, slices: items.length > 1 ? items.map(d => d.f.filename) : undefined,
+        mime: 'application/dicom', size, originalSize: size, kind: 'dicom', createdAt: now,
+      });
+    }
+    for (const file of created) {
+      db.files.push(file);
+      log(req, req.user.id, 'file_uploaded', { fileId: file.id, title: file.title });
+      if (file.processing) enqueueVideo(file.id);
+    }
+    save();
+    res.json({ files: created.map(fileWithExtras), skipped });
+  } catch (e) {
+    uploaded.forEach(f => { if (!db.files.some(x => x.storedName === f.filename || (x.slices || []).includes(f.filename))) unlinkQuiet(f.path); });
+    next(e);
+  }
 });
 
 app.patch('/api/files/:id', auth('patient'), (req, res) => {
@@ -242,11 +339,11 @@ app.delete('/api/files/:id', auth('patient'), (req, res) => {
 app.get('/api/files/:id/content', auth(), (req, res) => {
   const f = db.files.find(x => x.id === req.params.id);
   if (!canAccessFile(req.user, f)) return res.status(404).json({ error: 'not_found' });
-  if (f.ownerId !== req.user.id && !req.query.nolog) {
+  if (f.ownerId !== req.user.id && !(parseInt(req.query.slice, 10) > 0)) {
     log(req, req.user.id, 'file_viewed_by_doctor', { fileId: f.id, title: f.title, ownerId: f.ownerId });
     save();
   }
-  sendStoredFile(res, f, req.query.download === '1');
+  sendStoredFile(req, res, f, req.query.download === '1');
 });
 
 app.get('/api/files/:id/notes', auth(), (req, res) => {
@@ -381,7 +478,7 @@ app.post('/api/s/:token/unlock', (req, res) => {
   save();
   const owner = db.users.find(u => u.id === s.ownerId);
   const files = s.fileIds.map(id => db.files.find(f => f.id === id)).filter(Boolean)
-    .map(f => ({ id: f.id, title: f.title, kind: f.kind, category: f.category, examDate: f.examDate, center: f.center, size: f.size, originalName: f.originalName }));
+    .map(f => ({ id: f.id, title: f.title, kind: f.kind, category: f.category, examDate: f.examDate, center: f.center, size: f.size, originalName: f.originalName, sliceCount: f.slices ? f.slices.length : 1 }));
   res.json({ key: shareKey(s), patientName: owner?.name, files, expiresAt: s.expiresAt });
 });
 
@@ -392,11 +489,12 @@ app.get('/api/s/:token/files/:fid', (req, res) => {
   }
   const f = db.files.find(x => x.id === req.params.fid);
   if (!f) return res.status(404).json({ error: 'not_found' });
-  if (!req.headers.range || req.headers.range.startsWith('bytes=0-')) {
+  const firstRequest = (!req.headers.range || req.headers.range.startsWith('bytes=0-')) && !(parseInt(req.query.slice, 10) > 0);
+  if (firstRequest) {
     s.accessLog.push({ at: new Date().toISOString(), ip: req.ip, action: req.query.download === '1' ? 'downloaded' : 'viewed', fileId: f.id, title: f.title });
     save();
   }
-  sendStoredFile(res, f, req.query.download === '1');
+  sendStoredFile(req, res, f, req.query.download === '1');
 });
 
 // ================= الطبيب =================
@@ -498,7 +596,7 @@ app.post('/api/admin/doctors/:id/verify', admin, (req, res) => {
 app.get('/api/admin/doctors/:id/license', admin, (req, res) => {
   const u = db.users.find(x => x.id === req.params.id && x.role === 'doctor');
   if (!u?.doctor?.licenseFile) return res.status(404).json({ error: 'not_found' });
-  sendStoredFile(res, u.doctor.licenseFile, false);
+  sendStoredFile(req, res, u.doctor.licenseFile, false);
 });
 
 app.post('/api/admin/centers', admin, (req, res) => {
@@ -543,7 +641,7 @@ app.get('/api/admin/activity', admin, (req, res) => {
 app.use('/vendor/dicomParser.min.js', (req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/dicom-parser/dist/dicomParser.min.js')));
 app.use(express.static(path.join(__dirname, 'public')));
-app.get(['/s/:token', '/'], (req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
+app.get(['/s/:token', '/', '/admin', '/admin/'], (req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
 
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'file_too_large' : 'upload_error' });
@@ -552,4 +650,6 @@ app.use((err, req, res, next) => {
 });
 
 store.ensureSeed(hashPassword);
+// إكمال ضغط الفيديوهات التي توقفت بسبب إعادة تشغيل الخادم
+db.files.filter(f => f.processing).forEach(f => enqueueVideo(f.id));
 app.listen(PORT, () => console.log(`✨ منصة نور تعمل على http://localhost:${PORT}`));

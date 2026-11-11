@@ -48,7 +48,8 @@ async function api(path, opts = {}) {
   try { data = await res.json(); } catch {}
   if (!res.ok) {
     if (res.status === 401 && !path.startsWith('/api/auth') && !path.startsWith('/api/s/')) {
-      state.user = null; go('/login');
+      state.user = null;
+      if (isAdminPath()) render(); else go('/login');
     }
     const e = new Error(data.error || 'server_error'); e.code = data.error; e.data = data; throw e;
   }
@@ -157,7 +158,15 @@ const kindIcon = k => ({ pdf: 'pdf', image: 'image', dicom: 'dicom', video: 'vid
 function go(path) { if (location.hash !== '#' + path) location.hash = path; else render(); }
 window.addEventListener('hashchange', render);
 
-function homeFor(u) { return u.role === 'admin' ? '/app/admin' : u.role === 'doctor' ? '/app/inbox' : '/app/files'; }
+function homeFor(u) { return u.role === 'admin' ? '/overview' : u.role === 'doctor' ? '/app/inbox' : '/app/files'; }
+const isAdminPath = () => /^\/admin\/?$/.test(location.pathname);
+// الأدمن يعيش على /admin فقط، وبقية المستخدمين على الصفحة الرئيسية
+function goHome(u) {
+  if (u.role === 'admin') { if (isAdminPath()) go('/overview'); else location.href = '/admin#/overview'; }
+  else if (isAdminPath()) location.href = '/#' + homeFor(u);
+  else go(homeFor(u));
+}
+const dashboardHref = u => (u.role === 'admin' ? '/admin#/overview' : '#' + homeFor(u));
 
 function setLang(l) {
   state.lang = l; setLS('noor_lang', l);
@@ -181,17 +190,23 @@ async function render() {
   if (m) return renderSharePage(m[1]);
 
   const route = location.hash.slice(1) || '/';
+  if (isAdminPath()) {
+    if (!state.user || state.user.role !== 'admin') return renderAdminLogin();
+    const item = NAV.admin.find(n => n.path === route);
+    if (!item) return go('/overview');
+    return renderShell(item);
+  }
   if (route === '/') return renderLanding();
+  if (route === '/terms') return renderTerms();
+  if (state.user && state.user.role === 'admin') { location.href = '/admin#/overview'; return; }
   if (route === '/login' || route === '/register') {
     if (state.user) return go(homeFor(state.user));
     return renderAuth(route === '/register');
   }
   if (!state.user) return go('/login');
-  const parts = route.split('/').filter(Boolean); // ['app', ...]
-  const page = parts.slice(1).join('/') || '';
-  const allowed = NAV[state.user.role].map(n => n.path);
-  if (!allowed.includes('/app/' + page)) return go(homeFor(state.user));
-  renderShell(page);
+  const item = NAV[state.user.role].find(n => n.path === route);
+  if (!item) return go(homeFor(state.user));
+  renderShell(item);
 }
 
 // ============ الصفحة الرئيسية ============
@@ -201,7 +216,7 @@ function publicHeader() {
     <nav class="pub-nav">
       ${langBtn()}
       ${state.user
-        ? `<button class="btn btn-primary btn-sm" data-go="${homeFor(state.user)}">${t('nav.dashboard')}</button>`
+        ? `<a class="btn btn-primary btn-sm" href="${dashboardHref(state.user)}">${t('nav.dashboard')}</a>`
         : `<button class="btn btn-ghost btn-sm" data-go="/login">${t('auth.login')}</button><button class="btn btn-primary btn-sm" data-go="/register">${t('auth.register')}</button>`}
     </nav>
   </header>`;
@@ -298,7 +313,7 @@ function renderAuth(isRegister) {
         <div class="demo-box">
           <b>${t('auth.demo')}</b>
           <div class="demo-grid">
-            ${[['patient', 'patient@noor.app', 'Patient@1234'], ['doctor', 'doctor@noor.app', 'Doctor@1234'], ['admin', 'admin@noor.app', 'Admin@1234']].map(([r, e, p]) =>
+            ${[['patient', 'patient@noor.app', 'Patient@1234'], ['doctor', 'doctor@noor.app', 'Doctor@1234']].map(([r, e, p]) =>
               `<button type="button" class="demo-btn" data-email="${e}" data-pass="${p}">${t('role.' + r)}</button>`).join('')}
           </div>
         </div>` : ''}
@@ -330,44 +345,96 @@ function renderAuth(isRegister) {
       }
       state.user = data.user;
       toast(t('auth.welcome', { name: data.user.name }));
-      go(homeFor(data.user));
+      goHome(data.user);
     } catch (ex) {
       err.textContent = errMsg(ex); err.hidden = false;
     } finally { btn.disabled = false; }
   };
 }
 
+// ============ دخول الأدمن (رابط مستقل /admin) ============
+function renderAdminLogin() {
+  document.title = t('adminLogin.docTitle');
+  $('#app').innerHTML = `
+  <div class="admin-login">
+    <div class="admin-login-top">${langBtn()}</div>
+    <form class="admin-card" id="adm-form" novalidate>
+      <div class="admin-badge">${logo(48)}<span class="lock-chip">${icon('lock')}</span></div>
+      <h1>${t('adminLogin.title')}</h1>
+      <p>${t('adminLogin.sub')}</p>
+      <label class="field"><span>${t('f.email')}</span><input name="email" type="email" required autocomplete="username" dir="ltr"></label>
+      <label class="field"><span>${t('adminLogin.password')}</span><input name="password" type="password" required autocomplete="current-password" dir="ltr"></label>
+      <div class="form-error" id="adm-err" hidden></div>
+      <button class="btn btn-gold btn-block btn-lg" type="submit">${icon('shield')} ${t('adminLogin.submit')}</button>
+      <button type="button" class="admin-demo" id="adm-demo">${t('adminLogin.demo')}</button>
+      <a class="admin-back" href="/">${t('adminLogin.back')}</a>
+    </form>
+  </div>`;
+  const form = $('#adm-form');
+  $('#adm-demo').onclick = () => { form.email.value = 'admin@noor.app'; form.password.value = 'Admin@1234'; form.requestSubmit(); };
+  form.onsubmit = async e => {
+    e.preventDefault();
+    const err = $('#adm-err'); err.hidden = true;
+    const btn = $('button[type=submit]', form); btn.disabled = true;
+    try {
+      const data = await api('/api/admin/login', { method: 'POST', body: { email: form.email.value, password: form.password.value } });
+      state.user = data.user;
+      toast(t('auth.welcome', { name: data.user.name }));
+      document.title = state.lang === 'ar' ? 'نور | لوحة الإدارة' : 'Noor | Admin';
+      go('/overview');
+    } catch (ex) { err.textContent = errMsg(ex); err.hidden = false; }
+    finally { btn.disabled = false; }
+  };
+}
+
+// ============ الشروط وسياسة الخصوصية ============
+function renderTerms() {
+  $('#app').innerHTML = `
+  <div class="landing">
+    ${publicHeader()}
+    <article class="terms card">
+      <h1>${t('terms.title')}</h1>
+      <p class="muted small">${t('terms.updated')}</p>
+      <div class="info-box">${icon('alert')} ${t('terms.draft')}</div>
+      ${t('terms.body')}
+    </article>
+    <footer class="pub-footer">${logo(24)} <span>© 2026 ${t('brand')}</span></footer>
+  </div>`;
+  window.scrollTo(0, 0);
+}
+
 // ============ الهيكل العام ============
 const NAV = {
   patient: [
-    { path: '/app/files', icon: 'file', key: 'nav.files' },
-    { path: '/app/shares', icon: 'share', key: 'nav.shares' },
-    { path: '/app/profile', icon: 'user', key: 'nav.profile' },
+    { path: '/app/files', view: 'files', icon: 'file', key: 'nav.files' },
+    { path: '/app/shares', view: 'shares', icon: 'share', key: 'nav.shares' },
+    { path: '/app/profile', view: 'profile', icon: 'user', key: 'nav.profile' },
   ],
   doctor: [
-    { path: '/app/inbox', icon: 'inbox', key: 'nav.inbox' },
-    { path: '/app/profile', icon: 'user', key: 'nav.profile' },
+    { path: '/app/inbox', view: 'inbox', icon: 'inbox', key: 'nav.inbox' },
+    { path: '/app/profile', view: 'profile', icon: 'user', key: 'nav.profile' },
   ],
+  // لوحة الأدمن على الرابط المستقل /admin
   admin: [
-    { path: '/app/admin', icon: 'chart', key: 'nav.overview' },
-    { path: '/app/admin/users', icon: 'users', key: 'nav.users' },
-    { path: '/app/admin/doctors', icon: 'shield', key: 'nav.verify' },
-    { path: '/app/admin/centers', icon: 'hospital', key: 'nav.centers' },
-    { path: '/app/admin/activity', icon: 'activity', key: 'nav.activity' },
-    { path: '/app/profile', icon: 'user', key: 'nav.profile' },
+    { path: '/overview', view: 'admin', icon: 'chart', key: 'nav.overview' },
+    { path: '/users', view: 'admin/users', icon: 'users', key: 'nav.users' },
+    { path: '/doctors', view: 'admin/doctors', icon: 'shield', key: 'nav.verify' },
+    { path: '/centers', view: 'admin/centers', icon: 'hospital', key: 'nav.centers' },
+    { path: '/activity', view: 'admin/activity', icon: 'activity', key: 'nav.activity' },
+    { path: '/profile', view: 'profile', icon: 'user', key: 'nav.profile' },
   ],
 };
 
-function renderShell(page) {
+function renderShell(item) {
   const u = state.user;
-  const current = '/app/' + page;
+  const current = item.path, page = item.view;
   $('#app').innerHTML = `
-  <div class="shell">
+  <div class="shell ${u.role === 'admin' ? 'shell-admin' : ''}">
     <aside class="sidebar">
-      <a class="brand" href="#/">${logo(36)}<span><b>${t('brand')}</b><small>${t('role.' + u.role)}</small></span></a>
+      <a class="brand" href="${u.role === 'admin' ? '#/overview' : '#/'}">${logo(36)}<span><b>${t('brand')}</b><small>${t('role.' + u.role)}</small></span></a>
       <nav class="side-nav">
         ${NAV[u.role].map(n => `<a href="#${n.path}" class="${current === n.path ? 'active' : ''}" data-go="${n.path}">${icon(n.icon)}<span>${t(n.key)}</span>
-          ${n.path === '/app/admin/doctors' ? '<em class="nav-badge" id="pending-badge" hidden></em>' : ''}</a>`).join('')}
+          ${n.path === '/doctors' ? '<em class="nav-badge" id="pending-badge" hidden></em>' : ''}</a>`).join('')}
       </nav>
       <div class="side-foot">
         <div class="me"><span class="avatar">${esc(u.name.replace(/^د\.\s*/, '').trim()[0] || '?')}</span><div><b>${esc(u.name)}</b><small dir="ltr">${esc(u.email)}</small></div></div>
@@ -384,7 +451,11 @@ function renderShell(page) {
       <main class="content" id="view"><div class="loading"><span class="spinner"></span></div></main>
     </div>
   </div>`;
-  $('#logout').onclick = async () => { await api('/api/auth/logout', { method: 'POST' }).catch(() => {}); state.user = null; go('/'); };
+  $('#logout').onclick = async () => {
+    await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    state.user = null;
+    if (isAdminPath()) { history.replaceState(null, '', '/admin'); render(); } else go('/');
+  };
   $('#menu-btn').onclick = () => document.body.classList.toggle('nav-open');
   $('#nav-scrim').onclick = () => document.body.classList.remove('nav-open');
 
@@ -393,8 +464,7 @@ function renderShell(page) {
     'admin': viewAdminOverview, 'admin/users': viewAdminUsers, 'admin/doctors': viewAdminDoctors,
     'admin/centers': viewAdminCenters, 'admin/activity': viewAdminActivity,
   };
-  const nav = NAV[u.role].find(n => n.path === current);
-  $('#page-title').textContent = nav ? t(nav.key) : '';
+  $('#page-title').textContent = t(item.key);
   if (u.role === 'admin') api('/api/admin/stats').then(s => { const b = $('#pending-badge'); if (b && s.pendingDoctors) { b.textContent = s.pendingDoctors; b.hidden = false; } }).catch(() => {});
   const viewEl = $('#view');
   (views[page] || viewFiles)(viewEl).catch(e => {
@@ -421,12 +491,7 @@ async function viewFiles(el) {
 
   el.innerHTML = `
     ${pageHead(t('files.title'), t('files.sub'), `<button class="btn btn-primary" id="upload-btn">${icon('upload')} ${t('files.upload')}</button>`)}
-    <div class="stat-row small">
-      <div class="mini-stat"><b>${files.length}</b><span>${t('files.count')}</span></div>
-      <div class="mini-stat"><b>${files.filter(f => f.kind === 'dicom').length}</b><span>${t('kind.dicom')}</span></div>
-      <div class="mini-stat"><b>${fmtSize(files.reduce((a, f) => a + f.size, 0))}</b><span>${t('files.storage')}</span></div>
-      <div class="mini-stat"><b>${files.reduce((a, f) => a + f.notesCount, 0)}</b><span>${t('files.doctorNotes')}</span></div>
-    </div>
+    <div class="stat-row small" id="file-stats"></div>
     <div class="toolbar">
       <div class="search">${icon('search')}<input id="q" placeholder="${t('files.search')}"></div>
       <div class="chips" id="cats">
@@ -441,7 +506,15 @@ async function viewFiles(el) {
     <div id="file-grid" class="file-grid"></div>`;
 
   const grid = $('#file-grid', el);
+  function drawStats() {
+    $('#file-stats', el).innerHTML = `
+      <div class="mini-stat"><b>${files.length}</b><span>${t('files.count')}</span></div>
+      <div class="mini-stat"><b>${files.filter(f => f.kind === 'dicom').length}</b><span>${t('kind.dicom')}</span></div>
+      <div class="mini-stat"><b>${fmtSize(files.reduce((a, f) => a + f.size, 0))}</b><span>${t('files.storage')}</span></div>
+      <div class="mini-stat"><b>${files.reduce((a, f) => a + f.notesCount, 0)}</b><span>${t('files.doctorNotes')}</span></div>`;
+  }
   function draw() {
+    drawStats();
     const q = ui.q.trim().toLowerCase();
     const list = files.filter(f => (ui.cat === 'all' || f.category === ui.cat) &&
       (!q || [f.title, f.center, f.originalName, f.notes].join(' ').toLowerCase().includes(q)))
@@ -455,7 +528,8 @@ async function viewFiles(el) {
     grid.innerHTML = list.map(f => `
       <article class="file-card ${ui.selected.has(f.id) ? 'selected' : ''}" data-id="${f.id}">
         <label class="file-check" title="${t('select')}"><input type="checkbox" ${ui.selected.has(f.id) ? 'checked' : ''}><span></span></label>
-        <button class="file-thumb c-${f.category}" data-act="view">${icon(kindIcon(f.kind))}<small>${t('kind.' + f.kind)}</small></button>
+        <button class="file-thumb c-${f.category}" data-act="view">${icon(kindIcon(f.kind))}<small>${t('kind.' + f.kind)}${f.sliceCount > 1 ? ' • ' + t('files.slices', { n: f.sliceCount }) : ''}</small></button>
+        ${f.processing ? `<span class="proc-badge"><span class="spinner sm"></span> ${t('files.compressing')}</span>` : ''}
         <div class="file-body">
           <h3 title="${esc(f.title)}">${esc(f.title)}</h3>
           <div class="file-meta">
@@ -463,6 +537,7 @@ async function viewFiles(el) {
             <span>${icon('clock')} ${fmtDate(f.examDate || f.createdAt)}</span>
           </div>
           ${f.center ? `<div class="file-center">${icon('hospital')} ${esc(f.center)}</div>` : ''}
+          ${savedLine(f)}
           ${f.notesCount ? `<button class="note-flag" data-act="view">${icon('note')} ${t('files.notesFrom', { n: f.notesCount })}</button>` : ''}
         </div>
         <div class="file-actions">
@@ -478,6 +553,21 @@ async function viewFiles(el) {
     $('#sel-count', el).textContent = t('files.selected', { n: ui.selected.size });
   }
   draw();
+
+  // متابعة الفيديوهات التي يجري ضغطها على الخادم
+  const poll = setInterval(async () => {
+    if (!el.isConnected) return clearInterval(poll);
+    if (!files.some(f => f.processing)) return;
+    try {
+      const fresh = (await api('/api/files')).files;
+      let changed = false;
+      for (const f of files) {
+        const n = fresh.find(x => x.id === f.id);
+        if (n && f.processing && !n.processing) { Object.assign(f, n); changed = true; toast(t('files.videoReady', { title: f.title })); }
+      }
+      if (changed && el.isConnected) draw();
+    } catch {}
+  }, 5000);
 
   $('#q', el).oninput = e => { ui.q = e.target.value; draw(); };
   $('#cats', el).onclick = e => {
@@ -509,19 +599,65 @@ async function viewFiles(el) {
     }
   };
 
-  async function openUpload() {
-    const centers = await getCenters().catch(() => []);
-    let picked = [];
-    const m = modal(`
-      <div class="modal-head"><h2>${icon('upload')} ${t('up.title')}</h2><button class="icon-btn" data-close>${icon('x')}</button></div>
-      <form class="modal-body" id="up-form">
+  function openUpload() {
+    openUploadModal(created => {
+      files.push(...created); draw();
+      if (created.some(f => f.processing)) toast(t('up.videoProcessing'));
+    });
+  }
+}
+
+function savedLine(f) {
+  if (!f.originalSize || f.originalSize <= f.size || f.processing) return '';
+  const pct = Math.round((1 - f.size / f.originalSize) * 100);
+  return `<div class="saved-line" title="${fmtSize(f.originalSize)} → ${fmtSize(f.size)}">${icon('storage')} ${t('files.saved', { pct })}</div>`;
+}
+
+// ---- نافذة الرفع: اختيار ← مراجعة وموافقة ← رفع مع حالة لكل ملف ----
+const UP_EXT = {
+  pdf: 'pdf', jpg: 'image', jpeg: 'image', png: 'image', webp: 'image', gif: 'image',
+  mp4: 'video', webm: 'video', mov: 'video', m4v: 'video', dcm: 'dicom', dicom: 'dicom',
+};
+async function detectClientKind(file) {
+  const name = file.name || '';
+  if (name.toUpperCase() === 'DICOMDIR') return 'ignore';
+  const dot = name.lastIndexOf('.');
+  const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+  if (UP_EXT[ext]) return UP_EXT[ext];
+  if (file.size > 132) {
+    try { if (await file.slice(128, 132).text() === 'DICM') return 'dicom'; } catch {}
+  }
+  return null;
+}
+
+async function openUploadModal(onDone) {
+  const centers = await getCenters().catch(() => []);
+  const needTerms = !state.user.termsAcceptedAt;
+  const items = []; // { id, kind, files[], name, size, url, state: 'ready'|'skip'|'uploading'|'done'|'error', note }
+  const urls = [];
+  let busy = false, finished = false, seq = 0;
+  const created = [];
+
+  const m = modal(`
+    <div class="modal-head"><h2>${icon('upload')} ${t('up.title')}</h2><button class="icon-btn" data-close>${icon('x')}</button></div>
+    <form class="modal-body" id="up-form">
+      <div class="up-pickers" id="pickers">
         <label class="dropzone" id="dz">
-          <input type="file" id="up-input" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,.dcm,.dicom,.mp4,.webm,.mov,.m4v">
+          <input type="file" id="up-input" multiple>
           <div class="dz-ic">${icon('upload')}</div>
           <b>${t('up.drop')}</b>
           <small class="muted">${t('up.types')}</small>
         </label>
-        <ul class="up-list" id="up-list"></ul>
+        <label class="folder-pick">
+          <input type="file" id="up-folder" webkitdirectory multiple>
+          ${icon('dicom')} <span><b>${t('up.folder')}</b><small class="muted">${t('up.folderSub')}</small></span>
+        </label>
+      </div>
+      <section id="review" hidden>
+        <div class="review-head"><h4>${icon('eye')} ${t('up.review')}</h4><span class="muted small" id="review-count"></span></div>
+        <ul class="review-list" id="review-list"></ul>
+      </section>
+      <div id="meta">
         <div class="grid-2">
           <label class="field"><span>${t('f.title')}</span><input name="title" placeholder="${t('up.titlePh')}"></label>
           <label class="field"><span>${t('f.category')}</span><select name="category">${CATS.map(c => `<option value="${c}">${t('cat.' + c)}</option>`).join('')}</select></label>
@@ -530,48 +666,152 @@ async function viewFiles(el) {
         </div>
         <datalist id="centers-dl">${centers.map(c => `<option value="${esc(state.lang === 'en' && c.nameEn ? c.nameEn : c.name)}">`).join('')}</datalist>
         <label class="field"><span>${t('f.notes')} <small class="muted">(${t('f.optional')})</small></span><textarea name="notes" rows="2"></textarea></label>
-        <div class="progress" id="up-prog" hidden><i></i></div>
-        <div class="form-error" id="up-err" hidden></div>
-        <div class="row-end">
-          <button type="button" class="btn btn-ghost" data-close>${t('cancel')}</button>
-          <button class="btn btn-primary" type="submit" id="up-submit" disabled>${icon('upload')} ${t('up.submit')}</button>
+        ${needTerms ? `<label class="terms-check"><input type="checkbox" id="terms"><span>${t('up.terms', { link: `<a href="/#/terms" target="_blank" rel="noopener">${t('up.termsLink')}</a>` })}</span></label>` : ''}
+      </div>
+      <div class="up-summary" id="summary" hidden></div>
+      <div class="form-error" id="up-err" hidden></div>
+      <div class="row-end">
+        <button type="button" class="btn btn-ghost" data-close id="up-cancel">${t('cancel')}</button>
+        <button class="btn btn-primary" type="submit" id="up-submit" disabled>${icon('check')} ${t('up.approve')}</button>
+      </div>
+    </form>`, { wide: true, onClose: () => { urls.forEach(u => URL.revokeObjectURL(u)); if (created.length) onDone(created); } });
+
+  const list = $('#review-list', m), submit = $('#up-submit', m), form = $('#up-form', m);
+  const termsBox = $('#terms', m);
+  const validItems = () => items.filter(i => i.state !== 'skip');
+
+  function thumb(it) {
+    if (it.kind === 'image') return `<img src="${it.url}" alt="">`;
+    if (it.kind === 'video') return `<video src="${it.url}#t=0.5" muted preload="metadata" playsinline></video>`;
+    return icon(it.kind === 'dicom' ? 'dicom' : it.kind === 'pdf' ? 'pdf' : 'file');
+  }
+  function statusHtml(it) {
+    if (it.state === 'skip') return `<span class="st-icon bad" title="${esc(it.note)}">${icon('x')}</span>`;
+    if (it.state === 'ready') return busy || finished ? '' : `<button type="button" class="icon-btn danger" data-remove="${it.id}" title="${t('up.remove')}">${icon('trash')}</button>`;
+    if (it.state === 'uploading') return `<span class="st-icon"><span class="spinner sm"></span></span>`;
+    if (it.state === 'done') return `<span class="st-icon ok">${icon('check')}</span>`;
+    return `<span class="st-icon bad">${icon('x')}</span>`;
+  }
+  function drawList() {
+    $('#review', m).hidden = !items.length;
+    const v = validItems();
+    $('#review-count', m).textContent = t('up.reviewCount', { n: v.length });
+    list.innerHTML = items.map(it => `
+      <li class="rv rv-${it.state}" data-id="${it.id}">
+        <span class="rv-thumb c-${it.kind === 'dicom' ? 'imaging' : it.kind === 'pdf' ? 'report' : 'other'}">${thumb(it)}</span>
+        <div class="rv-text">
+          <b title="${esc(it.name)}">${esc(it.name)}</b>
+          <small>${it.kind && it.kind !== 'ignore' ? t('kind.' + it.kind) + ' • ' : ''}${it.files.length > 1 ? t('up.nFiles', { n: it.files.length }) + ' • ' : ''}${fmtSize(it.size)}</small>
+          ${it.state === 'uploading' ? `<div class="progress sm"><i style="width:${it.pct || 0}%"></i></div>` : ''}
+          ${it.note ? `<small class="rv-note ${it.state === 'done' ? 'ok' : it.state === 'skip' || it.state === 'error' ? 'bad' : ''}">${it.note}</small>` : ''}
         </div>
-      </form>`, { wide: true });
-    const input = $('#up-input', m), dz = $('#dz', m);
-    const setFiles = list => {
-      picked = [...list];
-      $('#up-list', m).innerHTML = picked.map(f => `<li>${icon('file')} <span>${esc(f.name)}</span><small>${fmtSize(f.size)}</small></li>`).join('');
-      $('#up-submit', m).disabled = !picked.length;
-      const ext = (picked[0]?.name || '').split('.').pop().toLowerCase();
-      if (['dcm', 'dicom'].includes(ext)) m.querySelector('[name=category]').value = 'imaging';
-    };
-    input.onchange = () => setFiles(input.files);
-    ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('over'); }));
-    ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('over'); }));
-    dz.addEventListener('drop', e => setFiles(e.dataTransfer.files));
-    $('#up-form', m).onsubmit = e => {
-      e.preventDefault();
-      const fd = new FormData(e.target);
-      picked.forEach(f => fd.append('files', f));
-      const prog = $('#up-prog', m), bar = $('i', prog), err = $('#up-err', m);
-      prog.hidden = false; err.hidden = true; $('#up-submit', m).disabled = true;
+        <div class="rv-status">${statusHtml(it)}</div>
+      </li>`).join('');
+    submit.disabled = busy || !v.length || (termsBox && !termsBox.checked);
+  }
+
+  async function addFiles(fileList) {
+    if (busy || finished) return;
+    for (const f of [...fileList]) {
+      const kind = await detectClientKind(f);
+      if (kind === 'ignore') continue;
+      if (kind === 'dicom') {
+        let study = items.find(i => i.kind === 'dicom' && i.state === 'ready');
+        if (!study) { study = { id: ++seq, kind: 'dicom', files: [], size: 0, state: 'ready' }; items.push(study); }
+        study.files.push(f); study.size += f.size;
+        study.name = study.files.length > 1 ? t('up.dicomStudy') : f.name;
+        continue;
+      }
+      const it = { id: ++seq, kind, files: [f], name: f.name, size: f.size, state: kind ? 'ready' : 'skip', note: kind ? '' : t('up.unsupported') };
+      if (kind === 'image' || kind === 'video') { it.url = URL.createObjectURL(f); urls.push(it.url); }
+      items.push(it);
+    }
+    // الأشعة تُصنَّف تلقائياً، ولا نغيّر تصنيف بقية الملفات
+    if (items.length && items.every(i => i.kind === 'dicom' || i.state === 'skip')) m.querySelector('[name=category]').value = 'imaging';
+    drawList();
+  }
+
+  $('#up-input', m).onchange = e => { addFiles(e.target.files); e.target.value = ''; };
+  $('#up-folder', m).onchange = e => { addFiles(e.target.files); e.target.value = ''; };
+  const dz = $('#dz', m);
+  ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('over'); }));
+  dz.addEventListener('drop', e => addFiles(e.dataTransfer.files));
+  list.onclick = e => {
+    const b = e.target.closest('[data-remove]'); if (!b) return;
+    items.splice(items.findIndex(i => i.id === +b.dataset.remove), 1);
+    drawList();
+  };
+  if (termsBox) termsBox.onchange = drawList;
+
+  function send(it, meta) {
+    return new Promise(resolve => {
+      const fd = new FormData();
+      Object.entries(meta).forEach(([k, v]) => fd.append(k, v));
+      it.files.forEach(f => fd.append('files', f));
       const xhr = new XMLHttpRequest();
       xhr.open('POST', '/api/files');
-      xhr.upload.onprogress = ev => { if (ev.lengthComputable) bar.style.width = (ev.loaded / ev.total * 100) + '%'; };
-      xhr.onload = () => {
-        let data = {}; try { data = JSON.parse(xhr.responseText); } catch {}
-        if (xhr.status === 200) {
-          files.push(...data.files); closeModal(); draw();
-          toast(t('up.done', { n: data.files.length }));
-          if (data.files.length < picked.length) toast(t('up.skipped'), 'err');
-        } else {
-          err.textContent = errMsg({ code: data.error }); err.hidden = false; $('#up-submit', m).disabled = false; prog.hidden = true;
-        }
+      xhr.upload.onprogress = ev => {
+        if (!ev.lengthComputable) return;
+        it.pct = Math.round(ev.loaded / ev.total * 100);
+        const bar = list.querySelector(`[data-id="${it.id}"] .progress i`);
+        if (bar) bar.style.width = it.pct + '%';
       };
-      xhr.onerror = () => { err.textContent = t('err.server_error'); err.hidden = false; $('#up-submit', m).disabled = false; };
+      xhr.onload = () => { let d = {}; try { d = JSON.parse(xhr.responseText); } catch {} resolve({ ok: xhr.status === 200, data: d }); };
+      xhr.onerror = () => resolve({ ok: false, data: { error: 'server_error' } });
       xhr.send(fd);
-    };
+    });
   }
+
+  form.onsubmit = async e => {
+    e.preventDefault();
+    if (finished) return closeModal();
+    const err = $('#up-err', m); err.hidden = true;
+    const todo = validItems().filter(i => i.state === 'ready');
+    if (!todo.length) return;
+    if (termsBox && !termsBox.checked) { err.textContent = t('err.terms_required'); err.hidden = false; return; }
+    busy = true;
+    $('#pickers', m).hidden = true; $('#meta', m).hidden = true; $('#up-cancel', m).hidden = true;
+    submit.innerHTML = `<span class="spinner sm light"></span> ${t('up.uploading')}`;
+    const fdv = new FormData(form);
+    const title = (fdv.get('title') || '').trim();
+    for (const it of todo) {
+      it.state = 'uploading'; it.pct = 0; drawList();
+      const meta = {
+        title: title && todo.length > 1 ? (it.kind === 'dicom' ? title : `${title} — ${it.name}`) : title,
+        category: it.kind === 'dicom' ? 'imaging' : fdv.get('category'),
+        examDate: fdv.get('examDate') || '', center: fdv.get('center') || '', notes: fdv.get('notes') || '',
+        acceptTerms: termsBox && termsBox.checked ? '1' : '',
+      };
+      const r = await send(it, meta);
+      if (r.ok && r.data.files && r.data.files.length) {
+        it.state = 'done';
+        if (!state.user.termsAcceptedAt) state.user.termsAcceptedAt = new Date().toISOString();
+        created.push(...r.data.files);
+        const notes = r.data.files.map(f => {
+          if (f.processing) return t('up.noteVideo');
+          if (f.kind === 'dicom') return t('up.noteDicom', { n: f.sliceCount, title: esc(f.title) });
+          if (f.originalSize > f.size) return t('up.noteSaved', { from: fmtSize(f.originalSize), to: fmtSize(f.size), pct: Math.round((1 - f.size / f.originalSize) * 100) });
+          return t('up.noteDone');
+        });
+        if (r.data.skipped && r.data.skipped.length) notes.push(t('up.noteSkipped', { n: r.data.skipped.length }));
+        it.note = notes.join('<br>');
+      } else {
+        it.state = 'error';
+        it.note = esc(r.data.skipped && r.data.skipped.length ? t('up.unsupported') : errMsg({ code: r.data.error }));
+      }
+      drawList();
+    }
+    busy = false; finished = true;
+    const ok = todo.filter(i => i.state === 'done').length;
+    const summary = $('#summary', m);
+    summary.hidden = false;
+    summary.className = 'up-summary ' + (ok === todo.length ? 'ok' : 'warn');
+    summary.innerHTML = `${icon(ok === todo.length ? 'check' : 'alert')} ${t('up.summary', { ok, total: todo.length })}`;
+    submit.disabled = false;
+    submit.innerHTML = `${icon('check')} ${t('up.finish')}`;
+    drawList();
+  };
 }
 
 function openEditFile(f, onSaved) {
@@ -613,7 +853,7 @@ function openFileViewer(f, { url, canDownload = true, notes = false, doctorMode 
       ${notes ? `<aside class="notes-panel" id="notes"><div class="loading"><span class="spinner"></span></div></aside>` : ''}
     </div>`, { wide: true, onClose: () => window.NoorViewer.dispose() });
   m.classList.add('modal-viewer');
-  window.NoorViewer.mount($('#stage', m), { url, kind: f.kind, t });
+  window.NoorViewer.mount($('#stage', m), { url, kind: f.kind, t, sliceCount: f.sliceCount || 1 });
   if (notes) loadNotes();
 
   async function loadNotes() {
@@ -912,7 +1152,7 @@ async function viewAdminOverview(el) {
   const catTotal = Math.max(1, Object.values(s.byCat).reduce((a, b) => a + b, 0));
   el.innerHTML = `
     ${pageHead(t('adm.overview'), t('adm.overviewSub'))}
-    ${s.pendingDoctors ? `<button class="alert-banner" data-go="/app/admin/doctors">${icon('shield')} ${t('adm.pendingAlert', { n: s.pendingDoctors })} <span>←</span></button>` : ''}
+    ${s.pendingDoctors ? `<button class="alert-banner" data-go="/doctors">${icon('shield')} ${t('adm.pendingAlert', { n: s.pendingDoctors })} <span>←</span></button>` : ''}
     <div class="stat-grid">
       ${[['users', s.users, 'adm.users', t('adm.usersSub', { p: s.patients, d: s.doctors })],
         ['file', fmtNum(s.files), 'adm.files', ''],
