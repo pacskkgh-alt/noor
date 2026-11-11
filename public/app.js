@@ -286,6 +286,7 @@ function renderAuth(isRegister) {
     </div>
     <div class="auth-main">
       <div class="auth-top">${langBtn()}</div>
+      <div id="auth-slot">
       <form class="auth-card" id="auth-form" novalidate>
         <h1>${isRegister ? t('auth.registerTitle') : t('auth.loginTitle')}</h1>
         <p class="muted">${isRegister ? t('auth.registerSub') : t('auth.loginSub')}</p>
@@ -296,8 +297,9 @@ function renderAuth(isRegister) {
           </div>
           <label class="field"><span>${t('f.name')}</span><input name="name" required autocomplete="name"></label>` : ''}
         <label class="field"><span>${t('f.email')}</span><input name="email" type="email" required autocomplete="email" dir="ltr"></label>
-        ${isRegister ? `<label class="field"><span>${t('f.phone')} <small class="muted">(${t('f.optional')})</small></span><input name="phone" type="tel" dir="ltr" placeholder="9665XXXXXXXX"></label>` : ''}
+        ${isRegister ? `<label class="field"><span>${t('f.mobile')}</span><input name="phone" type="tel" inputmode="tel" required dir="ltr" placeholder="05XXXXXXXX" autocomplete="tel"><small class="muted field-hint">${t('otp.phoneHint')}</small></label>` : ''}
         <label class="field"><span>${t('f.password')}</span><input name="password" type="password" required minlength="8" autocomplete="${isRegister ? 'new-password' : 'current-password'}" dir="ltr"></label>
+        ${!isRegister ? `<a href="#" class="forgot-link" id="forgot-link">${t('auth.forgot')}</a>` : ''}
         ${isRegister ? `
           <div id="doctor-fields" hidden>
             <div class="info-box">${icon('shield')} ${t('auth.doctorNote')}</div>
@@ -318,10 +320,14 @@ function renderAuth(isRegister) {
           </div>
         </div>` : ''}
       </form>
+      </div>
     </div>
   </div>`;
 
   const form = $('#auth-form');
+  const slot = $('#auth-slot');
+  const fp = $('#forgot-link');
+  if (fp) fp.onclick = e => { e.preventDefault(); renderForgot(slot, () => renderAuth(false)); };
   if (isRegister) {
     $$('input[name=role]', form).forEach(r => r.addEventListener('change', () => {
       $('#doctor-fields').hidden = form.role.value !== 'doctor';
@@ -343,12 +349,146 @@ function renderAuth(isRegister) {
       } else {
         data = await api('/api/auth/login', { method: 'POST', body: { email: form.email.value, password: form.password.value } });
       }
-      state.user = data.user;
-      toast(t('auth.welcome', { name: data.user.name }));
-      goHome(data.user);
+      const back = () => renderAuth(isRegister);
+      if (data.needPhone) return renderPhoneStep(slot, data, back);
+      if (data.otpRequired) {
+        return renderOtpForm(slot, data, {
+          title: isRegister ? t('otp.titleRegister') : t('otp.titleLogin'),
+          onBack: back, onSuccess: signedIn,
+        });
+      }
+      signedIn(data);
     } catch (ex) {
       err.textContent = errMsg(ex); err.hidden = false;
     } finally { btn.disabled = false; }
+  };
+}
+
+function signedIn(data) {
+  state.user = data.user;
+  toast(t('auth.welcome', { name: data.user.name }));
+  goHome(data.user);
+}
+
+// ---- إدخال رمز التحقق المرسل للجوال ----
+function renderOtpForm(host, ch, { title, onSuccess, onBack, withPassword = false, submitText, card = true }) {
+  host.innerHTML = `
+    <form class="${card ? 'auth-card ' : ''}otp-card" novalidate>
+      <div class="otp-ic">${icon('lock')}</div>
+      <h1>${esc(title)}</h1>
+      <p class="muted">${ch.phoneMasked ? t('otp.sentTo', { phone: `<b dir="ltr">${esc(ch.phoneMasked)}</b>` }) : t('otp.sentGeneric')}</p>
+      <div class="dev-code" ${ch.devCode ? '' : 'hidden'}>${icon('alert')} <span>${t('otp.devMode')}</span> <b dir="ltr">${esc(ch.devCode || '')}</b></div>
+      <label class="field"><span>${t('otp.code')}</span>
+        <input name="code" class="otp-input" inputmode="numeric" autocomplete="one-time-code" maxlength="6" dir="ltr" required placeholder="••••••"></label>
+      ${withPassword ? `<label class="field"><span>${t('pf.new')}</span><input name="newPassword" type="password" minlength="8" required dir="ltr" autocomplete="new-password"><small class="muted field-hint">${t('otp.pwHint')}</small></label>` : ''}
+      <div class="form-error" hidden></div>
+      <button class="btn btn-primary btn-block btn-lg" type="submit">${esc(submitText || t('otp.verify'))}</button>
+      <div class="otp-actions">
+        <button type="button" class="link-btn" data-resend disabled></button>
+        ${onBack ? `<button type="button" class="link-btn" data-back>${t('otp.back')}</button>` : ''}
+      </div>
+    </form>`;
+  const form = $('form', host), err = $('.form-error', form), code = form.code, resend = $('[data-resend]', form);
+  let left = ch.resendIn || 0;
+  const tick = () => {
+    if (!form.isConnected) return clearInterval(timer);
+    resend.disabled = left > 0;
+    resend.textContent = left > 0 ? t('otp.resendIn', { s: left }) : t('otp.resend');
+    left = Math.max(0, left - 1);
+  };
+  const timer = setInterval(tick, 1000); tick();
+  const showErr = m => { err.innerHTML = m; err.hidden = false; };
+  code.focus();
+  code.oninput = () => {
+    code.value = code.value.replace(/[٠-٩]/g, c => '٠١٢٣٤٥٦٧٨٩'.indexOf(c)).replace(/\D/g, '').slice(0, 6);
+    if (code.value.length === 6 && !withPassword) form.requestSubmit();
+  };
+  if (onBack) $('[data-back]', form).onclick = onBack;
+  resend.onclick = async () => {
+    err.hidden = true; resend.disabled = true;
+    try {
+      const d = await api('/api/auth/otp/resend', { method: 'POST', body: { challengeId: ch.challengeId } });
+      left = d.resendIn; toast(t('otp.resent'));
+      const dc = $('.dev-code', form); dc.hidden = !d.devCode; $('b', dc).textContent = d.devCode || '';
+      code.value = ''; code.focus();
+    } catch (ex) { if (ex.data?.wait) left = ex.data.wait; showErr(otpErr(ex)); }
+    tick();
+  };
+  let sending = false;
+  form.onsubmit = async e => {
+    e.preventDefault();
+    if (sending) return;
+    if (code.value.length !== 6) return showErr(t('otp.enter6'));
+    if (withPassword && form.newPassword.value.length < 8) return showErr(t('err.weak_password'));
+    err.hidden = true; sending = true;
+    const btn = $('button[type=submit]', form); btn.disabled = true;
+    try {
+      const d = await api('/api/auth/otp/verify', { method: 'POST', body: { challengeId: ch.challengeId, code: code.value, newPassword: withPassword ? form.newPassword.value : undefined } });
+      clearInterval(timer);
+      onSuccess(d);
+    } catch (ex) {
+      showErr(otpErr(ex)); code.value = ''; code.focus();
+      if (['otp_too_many', 'otp_expired'].includes(ex.code)) left = 0;
+    } finally { sending = false; btn.disabled = false; }
+  };
+}
+function otpErr(ex) {
+  if (ex.code === 'otp_invalid' && ex.data && ex.data.remaining != null) return t('otp.invalidLeft', { n: ex.data.remaining });
+  if (ex.code === 'otp_wait') return t('err.otp_wait', { s: ex.data?.wait || 60 });
+  return errMsg(ex);
+}
+
+// ---- حساب قديم بلا رقم: إضافة الجوال أثناء الدخول ----
+function renderPhoneStep(host, data, onBack) {
+  host.innerHTML = `
+    <form class="auth-card otp-card" novalidate>
+      <div class="otp-ic">${icon('user')}</div>
+      <h1>${t('otp.addPhoneTitle')}</h1>
+      <p class="muted">${t('otp.addPhoneSub')}</p>
+      <label class="field"><span>${t('f.mobile')}</span><input name="phone" type="tel" inputmode="tel" required dir="ltr" placeholder="05XXXXXXXX" value="${esc(data.phone || '')}" autocomplete="tel"></label>
+      <div class="form-error" hidden></div>
+      <button class="btn btn-primary btn-block btn-lg" type="submit">${t('otp.sendCode')}</button>
+      <div class="otp-actions"><button type="button" class="link-btn" data-back>${t('otp.back')}</button></div>
+    </form>`;
+  const form = $('form', host);
+  $('[data-back]', form).onclick = onBack;
+  form.phone.focus();
+  form.onsubmit = async e => {
+    e.preventDefault();
+    const err = $('.form-error', form); err.hidden = true;
+    try {
+      const ch = await api('/api/auth/otp/phone', { method: 'POST', body: { challengeId: data.challengeId, phone: form.phone.value } });
+      renderOtpForm(host, ch, { title: t('otp.titleLogin'), onBack, onSuccess: signedIn });
+    } catch (ex) { err.textContent = otpErr(ex); err.hidden = false; }
+  };
+}
+
+// ---- نسيت كلمة المرور ----
+function renderForgot(host, onBack) {
+  host.innerHTML = `
+    <form class="auth-card otp-card" novalidate>
+      <div class="otp-ic">${icon('help')}</div>
+      <h1>${t('forgot.title')}</h1>
+      <p class="muted">${t('forgot.sub')}</p>
+      <label class="field"><span>${t('forgot.identifier')}</span><input name="identifier" required dir="ltr" autocomplete="username"></label>
+      <div class="form-error" hidden></div>
+      <button class="btn btn-primary btn-block btn-lg" type="submit">${t('otp.sendCode')}</button>
+      <div class="otp-actions"><button type="button" class="link-btn" data-back>${t('otp.back')}</button></div>
+    </form>`;
+  const form = $('form', host);
+  $('[data-back]', form).onclick = onBack;
+  form.identifier.focus();
+  form.onsubmit = async e => {
+    e.preventDefault();
+    const err = $('.form-error', form); err.hidden = true;
+    if (!form.identifier.value.trim()) { err.textContent = t('err.missing_fields'); err.hidden = false; return; }
+    try {
+      const ch = await api('/api/auth/forgot', { method: 'POST', body: { identifier: form.identifier.value } });
+      renderOtpForm(host, ch, {
+        title: t('forgot.title'), withPassword: true, submitText: t('forgot.submit'), onBack,
+        onSuccess: d => { toast(t('forgot.done')); signedIn(d); },
+      });
+    } catch (ex) { err.textContent = otpErr(ex); err.hidden = false; }
   };
 }
 
@@ -1122,7 +1262,10 @@ async function viewProfile(el) {
         <h3>${t('pf.info')}</h3>
         <label class="field"><span>${t('f.name')}</span><input name="name" value="${esc(u.name)}" required></label>
         <label class="field"><span>${t('f.email')}</span><input value="${esc(u.email)}" disabled dir="ltr"></label>
-        <label class="field"><span>${t('f.phone')}</span><input name="phone" value="${esc(u.phone)}" dir="ltr"></label>
+        <div class="field"><span>${t('f.mobile')}</span>
+          <div class="phone-row"><input value="${esc(u.phone || '')}" disabled dir="ltr">
+            ${u.phone && u.phoneVerified ? `<span class="status st-on">${t('otp.verified')}</span>` : ''}
+            <button type="button" class="btn btn-ghost btn-sm" id="change-phone">${u.phone ? t('otp.changePhone') : t('otp.addPhone')}</button></div></div>
         ${u.doctor ? `<div class="kv"><span>${t('f.specialty')}</span><b>${esc(u.doctor.specialty)}</b></div><div class="kv"><span>${t('f.licenseNumber')}</span><b dir="ltr">${esc(u.doctor.licenseNumber)}</b></div><div class="kv"><span>${t('pf.verification')}</span><span class="status ${u.doctor.verification === 'approved' ? 'st-on' : u.doctor.verification === 'rejected' ? 'st-off' : 'st-warn'}">${t('vs.' + u.doctor.verification)}</span></div>` : ''}
         <button class="btn btn-primary">${t('save')}</button>
       </form>
@@ -1135,8 +1278,32 @@ async function viewProfile(el) {
     </div>`;
   $('#pf-form', el).onsubmit = async e => {
     e.preventDefault();
-    try { const { user } = await api('/api/auth/me', { method: 'PATCH', body: { name: e.target.name.value, phone: e.target.phone.value } }); state.user = user; toast(t('saved')); render(); }
+    try { const { user } = await api('/api/auth/me', { method: 'PATCH', body: { name: e.target.name.value } }); state.user = user; toast(t('saved')); render(); }
     catch (ex) { toast(errMsg(ex), 'err'); }
+  };
+  $('#change-phone', el).onclick = () => {
+    const m = modal(`
+      <div class="modal-head"><h2>${icon('user')} ${t('otp.changePhone')}</h2><button class="icon-btn" data-close>${icon('x')}</button></div>
+      <div class="modal-body" id="ph-body">
+        <form id="ph-form" novalidate>
+          ${u.role !== 'admin' ? `<p class="muted" style="margin-bottom:14px">${t('otp.changeSub')}</p>` : ''}
+          <label class="field"><span>${t('f.mobile')}</span><input name="phone" type="tel" inputmode="tel" required dir="ltr" placeholder="05XXXXXXXX"></label>
+          <div class="form-error" hidden></div>
+          <div class="row-end"><button type="button" class="btn btn-ghost" data-close>${t('cancel')}</button><button class="btn btn-primary">${u.role === 'admin' ? t('save') : t('otp.sendCode')}</button></div>
+        </form>
+      </div>`);
+    const f = $('#ph-form', m);
+    f.phone.focus();
+    f.onsubmit = async e => {
+      e.preventDefault();
+      const err = $('.form-error', f); err.hidden = true;
+      try {
+        const d = await api('/api/auth/phone', { method: 'POST', body: { phone: f.phone.value } });
+        const done = r => { state.user = r.user; closeModal(); toast(t('otp.phoneChanged')); render(); };
+        if (d.user) return done(d);
+        renderOtpForm($('#ph-body', m), d, { title: t('otp.titlePhone'), card: false, onSuccess: done });
+      } catch (ex) { err.textContent = otpErr(ex); err.hidden = false; }
+    };
   };
   $('#pw-form', el).onsubmit = async e => {
     e.preventDefault();
@@ -1198,7 +1365,7 @@ async function viewAdminUsers(el) {
     const q = ui.q.toLowerCase();
     $('#tb', el).innerHTML = users.filter(u => (ui.role === 'all' || u.role === ui.role) && (!q || (u.name + u.email).toLowerCase().includes(q))).map(u => `
       <tr data-id="${u.id}">
-        <td><div class="cell-user"><span class="avatar sm">${esc(u.name.replace(/^د\.\s*/, '')[0])}</span><div><b>${esc(u.name)}</b><small dir="ltr">${esc(u.email)}</small></div></div></td>
+        <td><div class="cell-user"><span class="avatar sm">${esc(u.name.replace(/^د\.\s*/, '')[0])}</span><div><b>${esc(u.name)}</b><small dir="ltr">${esc(u.email)}</small>${u.phone ? `<small dir="ltr" class="phone-line">${esc(u.phone)} ${u.phoneVerified ? '<span class="ok-tick" title="' + t('otp.verified') + '">✓</span>' : ''}</small>` : ''}</div></div></td>
         <td><span class="badge role-${u.role}">${t('role.' + u.role)}</span>${u.doctor ? ` <span class="status sm ${u.doctor.verification === 'approved' ? 'st-on' : u.doctor.verification === 'rejected' ? 'st-off' : 'st-warn'}">${t('vs.' + u.doctor.verification)}</span>` : ''}</td>
         <td><span class="status ${u.status === 'active' ? 'st-on' : 'st-off'}">${t('us.' + u.status)}</span></td>
         <td>${u.filesCount}</td><td>${fmtSize(u.storage)}</td><td>${fmtDate(u.createdAt)}</td>
@@ -1359,6 +1526,8 @@ async function viewAdminActivity(el) {
     if (a.ownerName) parts.push(`${t('adm.patient')}: ${esc(a.ownerName)}`);
     if (d.email && a.action === 'login_failed') parts.push(`<span dir="ltr">${esc(d.email)}</span>`);
     if (d.role) parts.push(t('role.' + d.role));
+    if (d.purpose) parts.push(t('otpp.' + d.purpose));
+    if (d.phone) parts.push(`<span dir="ltr">${esc(d.phone)}</span>`);
     return parts.join(' • ') || '—';
   };
   const draw = () => {

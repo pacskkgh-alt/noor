@@ -176,6 +176,27 @@ ar: {
     <h2>5. الأطباء</h2><p>نتحقق من رخصة كل طبيب قبل ظهوره للمرضى، ولا يرى الطبيب إلا الفحوصات التي شاركتها معه خلال مدة صلاحيتها.</p>
     <h2>6. الإدارة</h2><p>يستطيع مديرو المنصة رؤية بيانات الحسابات وسجل النشاط لحماية المنصة، ولا يفتحون محتوى ملفاتك الطبية.</p>
     <h2>7. الأمان</h2><p>حافظ على سرية كلمة المرور ورموز المشاركة، وأبلغنا فوراً عند الاشتباه بأي استخدام غير مصرح به لحسابك.</p>`,
+
+  'f.mobile': 'رقم الجوال', 'auth.forgot': 'نسيت كلمة المرور؟',
+  'otp.phoneHint': 'سيصلك رمز تحقق برسالة نصية على هذا الرقم',
+  'otp.titleRegister': 'تأكيد رقم الجوال', 'otp.titleLogin': 'التحقق من هويتك', 'otp.titlePhone': 'تأكيد الرقم الجديد',
+  'otp.sentTo': 'أرسلنا رمزاً من 6 أرقام برسالة نصية إلى {phone}', 'otp.sentGeneric': 'إذا كان الحساب مسجلاً، سيصل رمز من 6 أرقام إلى الجوال المرتبط به.',
+  'otp.devMode': 'وضع تجريبي (لم يُضف مفتاح Authentica بعد). الرمز هو:', 'otp.code': 'رمز التحقق',
+  'otp.pwHint': '8 أحرف على الأقل', 'otp.verify': 'تحقق', 'otp.resendIn': 'إعادة الإرسال بعد {s} ثانية', 'otp.resend': 'إعادة إرسال الرمز',
+  'otp.back': 'رجوع', 'otp.resent': 'تم إرسال رمز جديد', 'otp.enter6': 'أدخل الرمز المكوّن من 6 أرقام',
+  'otp.invalidLeft': 'الرمز غير صحيح، متبقٍ {n} محاولات', 'otp.sendCode': 'إرسال الرمز',
+  'otp.addPhoneTitle': 'أضف رقم جوالك', 'otp.addPhoneSub': 'لحماية حسابك، أصبح الدخول يتطلب رمز تحقق على الجوال. أضف رقمك للمتابعة.',
+  'otp.verified': 'موثّق', 'otp.changePhone': 'تغيير الرقم', 'otp.addPhone': 'إضافة رقم',
+  'otp.changeSub': 'سيصلك رمز على الرقم الجديد، ولن يُعتمد إلا بعد إدخاله.', 'otp.phoneChanged': 'تم تحديث رقم الجوال',
+  'forgot.title': 'استعادة كلمة المرور', 'forgot.sub': 'أدخل بريدك الإلكتروني أو رقم جوالك، وسنرسل رمزاً إلى جوالك المسجل.',
+  'forgot.identifier': 'البريد الإلكتروني أو رقم الجوال', 'forgot.submit': 'تعيين كلمة المرور', 'forgot.done': 'تم تغيير كلمة المرور',
+  'err.invalid_phone': 'رقم الجوال غير صحيح. أدخل رقماً سعودياً مثل 05XXXXXXXX', 'err.phone_taken': 'رقم الجوال مسجّل في حساب آخر',
+  'err.otp_invalid': 'رمز التحقق غير صحيح', 'err.otp_expired': 'انتهت صلاحية الرمز. اطلب رمزاً جديداً',
+  'err.otp_too_many': 'محاولات خاطئة كثيرة. اطلب رمزاً جديداً', 'err.otp_wait': 'انتظر {s} ثانية قبل طلب رمز جديد',
+  'err.otp_rate_limited': 'طلبت رموزاً كثيرة. حاول بعد ساعة', 'err.otp_send_failed': 'تعذّر إرسال الرسالة حالياً، حاول بعد قليل',
+  'act.otp_sent': 'إرسال رمز تحقق', 'act.otp_failed': 'رمز تحقق خاطئ', 'act.password_reset': 'استعادة كلمة المرور',
+  'act.password_reset_requested': 'طلب استعادة كلمة المرور', 'act.phone_changed': 'تغيير رقم الجوال',
+  'otpp.register': 'تسجيل', 'otpp.login': 'دخول', 'otpp.add_phone': 'إضافة رقم', 'otpp.reset': 'استعادة', 'otpp.phone_change': 'تغيير الرقم',
 },
 
 en: {
@@ -354,5 +375,26 @@ en: {
     <h2>5. Doctors</h2><p>We verify every doctor’s license before patients can find them. Doctors only see exams you share with them, while the share is active.</p>
     <h2>6. Administration</h2><p>Platform admins can see account details and activity logs to protect the platform; they do not open your medical files.</p>
     <h2>7. Security</h2><p>Keep your password and share codes private, and tell us immediately if you suspect unauthorized use of your account.</p>`,
+
+  'f.mobile': 'Mobile number', 'auth.forgot': 'Forgot password?',
+  'otp.phoneHint': 'We’ll text a verification code to this number',
+  'otp.titleRegister': 'Confirm your mobile', 'otp.titleLogin': 'Verify it’s you', 'otp.titlePhone': 'Confirm the new number',
+  'otp.sentTo': 'We texted a 6-digit code to {phone}', 'otp.sentGeneric': 'If the account exists, a 6-digit code will be sent to its registered mobile.',
+  'otp.devMode': 'Demo mode (no Authentica key yet). The code is:', 'otp.code': 'Verification code',
+  'otp.pwHint': 'At least 8 characters', 'otp.verify': 'Verify', 'otp.resendIn': 'Resend in {s}s', 'otp.resend': 'Resend code',
+  'otp.back': 'Back', 'otp.resent': 'A new code was sent', 'otp.enter6': 'Enter the 6-digit code',
+  'otp.invalidLeft': 'Wrong code, {n} attempt(s) left', 'otp.sendCode': 'Send code',
+  'otp.addPhoneTitle': 'Add your mobile number', 'otp.addPhoneSub': 'To protect your account, signing in now requires a code sent to your mobile. Add your number to continue.',
+  'otp.verified': 'Verified', 'otp.changePhone': 'Change number', 'otp.addPhone': 'Add number',
+  'otp.changeSub': 'We’ll text a code to the new number; it’s only saved after you enter it.', 'otp.phoneChanged': 'Mobile number updated',
+  'forgot.title': 'Reset your password', 'forgot.sub': 'Enter your email or mobile number and we’ll text a code to your registered mobile.',
+  'forgot.identifier': 'Email or mobile number', 'forgot.submit': 'Set new password', 'forgot.done': 'Password changed',
+  'err.invalid_phone': 'Invalid mobile number. Enter a Saudi number like 05XXXXXXXX', 'err.phone_taken': 'This mobile is registered to another account',
+  'err.otp_invalid': 'Wrong verification code', 'err.otp_expired': 'The code expired. Request a new one',
+  'err.otp_too_many': 'Too many wrong attempts. Request a new code', 'err.otp_wait': 'Wait {s}s before requesting a new code',
+  'err.otp_rate_limited': 'Too many codes requested. Try again in an hour', 'err.otp_send_failed': 'Couldn’t send the text right now, please try again shortly',
+  'act.otp_sent': 'Code sent', 'act.otp_failed': 'Wrong code', 'act.password_reset': 'Password reset',
+  'act.password_reset_requested': 'Password reset requested', 'act.phone_changed': 'Mobile changed',
+  'otpp.register': 'sign-up', 'otpp.login': 'sign-in', 'otpp.add_phone': 'add number', 'otpp.reset': 'reset', 'otpp.phone_change': 'change number',
 },
 };

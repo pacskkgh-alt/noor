@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const store = require('./lib/store');
 const media = require('./lib/media');
+const otp = require('./lib/otp');
 
 const { db, save, uid, UPLOADS } = store;
 const app = express();
@@ -146,6 +147,26 @@ const upload = multer({
 });
 
 // ================= المصادقة =================
+// التحقق بالجوال (Authentica) للمرضى والأطباء. الأدمن والحسابات التجريبية معفاة.
+const needsOtp = u => ['patient', 'doctor'].includes(u.role) && !u.demo;
+const phoneTaken = (phone, exceptId) => db.users.some(u => u.phone === phone && u.id !== exceptId);
+
+function otpError(res, e) {
+  const status = { otp_wait: 429, otp_rate_limited: 429, otp_send_failed: 502 }[e.code] || 400;
+  return res.status(status).json({ error: e.code || 'server_error', wait: e.wait, remaining: e.remaining });
+}
+async function startOtp(req, res, c, extra = {}) {
+  try {
+    const devCode = await otp.sendCode(c, req.ip);
+    if (!c.fake) log(req, c.userId || null, 'otp_sent', { purpose: c.purpose, phone: otp.maskPhone(c.phone) });
+    save();
+    res.json({ otpRequired: true, ...otp.publicChallenge(c, devCode), ...extra });
+  } catch (e) {
+    if (c.purpose === 'register' && e.code !== 'otp_wait') { otp.dropChallenge(c); if (c.onExpire) c.onExpire(); }
+    otpError(res, e);
+  }
+}
+
 app.post('/api/auth/register', upload.single('license'), (req, res) => {
   const { name, email, password, role, phone, specialty, licenseNumber } = req.body;
   const cleanup = () => req.file && fs.unlink(req.file.path, () => {});
@@ -155,8 +176,11 @@ app.post('/api/auth/register', upload.single('license'), (req, res) => {
   if (password.length < 8) { cleanup(); return res.status(400).json({ error: 'weak_password' }); }
   const em = String(email).trim().toLowerCase();
   if (db.users.some(u => u.email === em)) { cleanup(); return res.status(409).json({ error: 'email_taken' }); }
+  const ph = otp.normalizePhone(phone);
+  if (!ph) { cleanup(); return res.status(400).json({ error: 'invalid_phone' }); }
+  if (phoneTaken(ph)) { cleanup(); return res.status(409).json({ error: 'phone_taken' }); }
   const user = {
-    id: uid(), name: String(name).trim(), email: em, phone: phone || '',
+    id: uid(), name: String(name).trim(), email: em, phone: ph, phoneVerified: false,
     role, status: 'active', passwordHash: hashPassword(password),
     createdAt: new Date().toISOString(),
   };
@@ -168,33 +192,131 @@ app.post('/api/auth/register', upload.single('license'), (req, res) => {
       licenseFile: { storedName: req.file.filename, originalName: req.file.originalname, mime: req.file.mimetype, kind: lk },
     };
   }
-  db.users.push(user);
-  log(req, user.id, 'register', { role });
-  startSession(res, user);
-  save();
-  res.json({ user: publicUser(user) });
+  // لا يُنشأ الحساب إلا بعد التحقق من الجوال
+  const c = otp.createChallenge('register', { phone: ph, pendingUser: user, onExpire: cleanup });
+  startOtp(req, res, c);
 });
 
 function handleLogin(adminOnly) {
   return (req, res) => {
-  const { email, password } = req.body || {};
-  const u = db.users.find(x => x.email === String(email || '').trim().toLowerCase());
-  // الأدمن يدخل من صفحته الخاصة فقط، ولا يدخل غيره منها
-  const wrongDoor = u && (adminOnly ? u.role !== 'admin' : u.role === 'admin');
-  if (!u || wrongDoor || !checkPassword(String(password || ''), u.passwordHash)) {
-    log(req, u ? u.id : null, 'login_failed', { email });
+    const { email, password } = req.body || {};
+    const u = db.users.find(x => x.email === String(email || '').trim().toLowerCase());
+    // الأدمن يدخل من صفحته الخاصة فقط، ولا يدخل غيره منها
+    const wrongDoor = u && (adminOnly ? u.role !== 'admin' : u.role === 'admin');
+    if (!u || wrongDoor || !checkPassword(String(password || ''), u.passwordHash)) {
+      log(req, u ? u.id : null, 'login_failed', { email });
+      save();
+      return res.status(401).json({ error: 'invalid_credentials' });
+    }
+    if (u.status !== 'active') return res.status(403).json({ error: 'account_suspended' });
+    if (needsOtp(u)) {
+      // حساب قديم بلا رقم موثّق: يضيف رقمه أولاً
+      if (!u.phone || !u.phoneVerified) {
+        const c = otp.createChallenge('add_phone', { userId: u.id });
+        return res.json({ needPhone: true, challengeId: c.id, phone: u.phone || '' });
+      }
+      return startOtp(req, res, otp.createChallenge('login', { userId: u.id, phone: u.phone }));
+    }
+    startSession(res, u);
+    log(req, u.id, adminOnly ? 'admin_login' : 'login');
     save();
-    return res.status(401).json({ error: 'invalid_credentials' });
-  }
-  if (u.status !== 'active') return res.status(403).json({ error: 'account_suspended' });
-  startSession(res, u);
-  log(req, u.id, adminOnly ? 'admin_login' : 'login');
-  save();
-  res.json({ user: publicUser(u) });
+    res.json({ user: publicUser(u) });
   };
 }
 app.post('/api/auth/login', handleLogin(false));
 app.post('/api/admin/login', handleLogin(true));
+
+// إضافة رقم جوال لحساب قديم أثناء الدخول
+app.post('/api/auth/otp/phone', (req, res) => {
+  const c = otp.getChallenge(req.body?.challengeId);
+  if (!c || c.purpose !== 'add_phone') return res.status(400).json({ error: 'otp_expired' });
+  const ph = otp.normalizePhone(req.body.phone);
+  if (!ph) return res.status(400).json({ error: 'invalid_phone' });
+  if (phoneTaken(ph, c.userId)) return res.status(409).json({ error: 'phone_taken' });
+  if (c.phone !== ph) { c.phone = ph; c.sentAt = 0; }
+  startOtp(req, res, c);
+});
+
+// نسيت كلمة المرور: بالبريد أو الجوال. الرد واحد دائماً حتى لا يُكشف وجود الحساب
+app.post('/api/auth/forgot', (req, res) => {
+  const id = String(req.body?.identifier || '').trim();
+  const ph = otp.normalizePhone(id);
+  const u = db.users.find(x => ph ? x.phone === ph : x.email === id.toLowerCase());
+  const valid = u && needsOtp(u) && u.status === 'active' && u.phone && u.phoneVerified;
+  const c = otp.createChallenge('reset', valid ? { userId: u.id, phone: u.phone } : { fake: true, phone: ph || 'fake:' + id.toLowerCase().slice(0, 80) });
+  log(req, valid ? u.id : null, 'password_reset_requested', { identifier: valid ? undefined : id.slice(0, 60) });
+  startOtp(req, res, c);
+});
+
+// تغيير رقم الجوال من صفحة الحساب
+app.post('/api/auth/phone', auth(), (req, res) => {
+  const ph = otp.normalizePhone(req.body?.phone);
+  if (!ph) return res.status(400).json({ error: 'invalid_phone' });
+  if (phoneTaken(ph, req.user.id)) return res.status(409).json({ error: 'phone_taken' });
+  if (req.user.role === 'admin') {
+    req.user.phone = ph; save();
+    return res.json({ user: publicUser(req.user) });
+  }
+  startOtp(req, res, otp.createChallenge('phone_change', { userId: req.user.id, phone: ph }));
+});
+
+app.post('/api/auth/otp/resend', (req, res) => {
+  const c = otp.getChallenge(req.body?.challengeId);
+  if (!c || !c.phone) return res.status(400).json({ error: 'otp_expired' });
+  startOtp(req, res, c);
+});
+
+app.post('/api/auth/otp/verify', (req, res) => {
+  const c = otp.getChallenge(req.body?.challengeId);
+  if (!c) return res.status(400).json({ error: 'otp_expired' });
+  if (c.purpose === 'reset') {
+    const pw = String(req.body.newPassword || '');
+    if (pw.length < 8) return res.status(400).json({ error: 'weak_password' });
+  }
+  try { otp.checkCode(c, req.body.code); }
+  catch (e) {
+    if (!c.fake) log(req, c.userId || null, 'otp_failed', { purpose: c.purpose, phone: otp.maskPhone(c.phone) });
+    save();
+    return otpError(res, e);
+  }
+  otp.dropChallenge(c);
+
+  if (c.purpose === 'register') {
+    const user = c.pendingUser;
+    if (db.users.some(u => u.email === user.email)) return res.status(409).json({ error: 'email_taken' });
+    if (phoneTaken(user.phone)) return res.status(409).json({ error: 'phone_taken' });
+    user.phoneVerified = true;
+    db.users.push(user);
+    log(req, user.id, 'register', { role: user.role });
+    startSession(res, user);
+    save();
+    return res.json({ user: publicUser(user) });
+  }
+
+  const u = db.users.find(x => x.id === c.userId);
+  if (!u || u.status !== 'active') return res.status(400).json({ error: 'otp_expired' });
+  if (c.purpose === 'login' || c.purpose === 'add_phone') {
+    if (c.purpose === 'add_phone') {
+      if (phoneTaken(c.phone, u.id)) return res.status(409).json({ error: 'phone_taken' });
+      u.phone = c.phone; u.phoneVerified = true;
+      log(req, u.id, 'phone_changed', { phone: otp.maskPhone(c.phone) });
+    }
+    startSession(res, u);
+    log(req, u.id, 'login', { otp: true });
+  } else if (c.purpose === 'reset') {
+    u.passwordHash = hashPassword(String(req.body.newPassword));
+    for (const [k, s] of Object.entries(db.sessions)) if (s.userId === u.id) delete db.sessions[k];
+    startSession(res, u);
+    log(req, u.id, 'password_reset');
+  } else if (c.purpose === 'phone_change') {
+    if (!req.user || req.user.id !== u.id) return res.status(401).json({ error: 'unauthorized' });
+    if (phoneTaken(c.phone, u.id)) return res.status(409).json({ error: 'phone_taken' });
+    u.phone = c.phone; u.phoneVerified = true;
+    log(req, u.id, 'phone_changed', { phone: otp.maskPhone(c.phone) });
+  }
+  save();
+  res.json({ user: publicUser(u) });
+});
 
 app.post('/api/auth/logout', (req, res) => {
   const sid = parseCookies(req).noor_sid;
@@ -204,12 +326,11 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/auth/me', (req, res) => res.json({ user: publicUser(req.user) }));
+app.get('/api/auth/me', (req, res) => res.json({ user: publicUser(req.user), otpDevMode: otp.DEV_MODE }));
 
 app.patch('/api/auth/me', auth(), (req, res) => {
-  const { name, phone, currentPassword, newPassword } = req.body || {};
+  const { name, currentPassword, newPassword } = req.body || {};
   if (name) req.user.name = String(name).trim();
-  if (phone !== undefined) req.user.phone = String(phone);
   if (newPassword) {
     if (!checkPassword(String(currentPassword || ''), req.user.passwordHash)) return res.status(400).json({ error: 'wrong_password' });
     if (newPassword.length < 8) return res.status(400).json({ error: 'weak_password' });

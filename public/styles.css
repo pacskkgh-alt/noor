@@ -606,3 +606,25 @@ blockquote { margin: 0 0 12px; background: var(--gold-l); border-inline-start: 3
   .admin-card { padding: 26px 20px; }
   .rv-thumb { width: 44px; height: 44px; }
 }
+
+/* ======================= التحقق بالجوال ======================= */
+.otp-card { text-align: center; }
+.otp-card .field { text-align: start; }
+.otp-card h1 { margin-bottom: 6px; }
+.otp-card > p.muted { margin-bottom: 18px; }
+.otp-ic { width: 64px; height: 64px; border-radius: 20px; background: var(--teal-l); color: var(--teal); display: grid; place-items: center; margin: 0 auto 16px; }
+.otp-ic .ic { width: 30px; height: 30px; }
+.otp-input { text-align: center; font-size: 28px !important; letter-spacing: 10px; font-weight: 800; padding: 12px !important; font-variant-numeric: tabular-nums; }
+.otp-input::placeholder { letter-spacing: 6px; color: #C5D3DA; }
+.otp-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+.link-btn { background: none; border: 0; padding: 4px 0; color: var(--teal); font-weight: 700; cursor: pointer; font-size: 14px; }
+.link-btn:disabled { color: var(--muted); cursor: default; font-weight: 500; }
+.dev-code { display: flex; gap: 8px; align-items: center; justify-content: center; flex-wrap: wrap; background: var(--gold-l); border: 1px dashed var(--gold); color: #7A5200; border-radius: 12px; padding: 10px 12px; margin-bottom: 14px; font-size: 13px; }
+.dev-code b { font-size: 20px; letter-spacing: 4px; color: var(--navy); }
+.field-hint { font-size: 12px; }
+.forgot-link { display: block; margin: -6px 0 14px; font-size: 14px; font-weight: 600; text-align: end; }
+.phone-row { display: flex; gap: 8px; align-items: center; }
+.phone-row input { flex: 1; min-width: 0; border: 1.5px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--bg); color: var(--muted); }
+.phone-line { display: flex; gap: 4px; align-items: center; }
+.ok-tick { color: var(--green); font-weight: 800; }
+#ph-body .otp-card h1 { font-size: 20px; }
