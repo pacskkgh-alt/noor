@@ -668,7 +668,7 @@ async function viewFiles(el) {
     grid.innerHTML = list.map(f => `
       <article class="file-card ${ui.selected.has(f.id) ? 'selected' : ''}" data-id="${f.id}">
         <label class="file-check" title="${t('select')}"><input type="checkbox" ${ui.selected.has(f.id) ? 'checked' : ''}><span></span></label>
-        <button class="file-thumb c-${f.category}" data-act="view">${icon(kindIcon(f.kind))}<small>${t('kind.' + f.kind)}${f.sliceCount > 1 ? ' • ' + t('files.slices', { n: f.sliceCount }) : ''}</small></button>
+        <button class="file-thumb c-${f.category}" data-act="view">${icon(kindIcon(f.kind))}<small>${t('kind.' + f.kind)}${Math.max(f.sliceCount || 1, f.frames || 1) > 1 ? ' • ' + t('files.slices', { n: Math.max(f.sliceCount || 1, f.frames || 1) }) : ''}</small></button>
         ${f.processing ? `<span class="proc-badge"><span class="spinner sm"></span> ${t('files.compressing')}</span>` : ''}
         <div class="file-body">
           <h3 title="${esc(f.title)}">${esc(f.title)}</h3>
@@ -1023,7 +1023,7 @@ function openFileViewer(f, { url, canDownload = true, notes = false, doctorMode 
       if (!list.some(x => x.file.id === f.id)) list.unshift({ file: f, url });
       const series = list.map(x => {
         const n = x.file.sliceCount || 1;
-        return { id: x.file.id, title: x.file.title, sliceCount: n, urlFor: i => (n > 1 ? x.url + (x.url.includes('?') ? '&' : '?') + 'slice=' + i : x.url) };
+        return { id: x.file.id, title: x.file.title, sliceCount: n, frames: x.file.frames || 1, url: x.url, urlFor: i => (n > 1 ? x.url + (x.url.includes('?') ? '&' : '?') + 'slice=' + i : x.url) };
       });
       pro.mount(stage, { t, mode: viewerMode, series, index: Math.max(0, series.findIndex(x => x.id === f.id)) })
         .catch(e => { console.error(e); window.NoorViewer.mount(stage, { url, kind: f.kind, t, sliceCount: f.sliceCount || 1 }); });

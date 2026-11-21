@@ -24,6 +24,21 @@ function initOnce() {
       await csInit();
       dicomImageLoaderInit({ maxWebWorkers: Math.min(4, Math.max(1, (navigator.hardwareConcurrency || 2) >> 1)) });
       volumeLoader.registerVolumeLoader('cornerstoneStreamingImageVolume', cornerstoneStreamingImageVolumeLoader);
+      // ملفات حقيقية تحمل أحياناً مسافة بكسل صفرية أو غير صالحة (مثل 0.000\0.000) فتتعطل الكاميرا والقياس؛ نصححها
+      let fixing = false;
+      metaData.addProvider((type, imageId) => {
+        if (fixing || (type !== 'imagePlaneModule' && type !== 'generalImageModule')) return undefined;
+        let m;
+        fixing = true;
+        try { m = metaData.get(type, imageId); } finally { fixing = false; }
+        if (!m) return undefined;
+        const ok = v => Number.isFinite(+v) && +v > 0;
+        if (type === 'imagePlaneModule' && !(ok(m.rowPixelSpacing) && ok(m.columnPixelSpacing))) {
+          return { ...m, rowPixelSpacing: 1, columnPixelSpacing: 1, pixelSpacing: [1, 1], usingDefaultValues: true };
+        }
+        if (type === 'generalImageModule' && m.pixelSpacing && !m.pixelSpacing.every(ok)) return { ...m, pixelSpacing: undefined };
+        return m;
+      }, 10000);
       csTools.init();
       [WindowLevelTool, PanTool, ZoomTool, StackScrollTool, LengthTool, AngleTool, EllipticalROITool, RectangleROITool, EraserTool, CrosshairsTool]
         .forEach(T => addTool(T));
@@ -120,10 +135,16 @@ class ProViewer {
     this.destroyed = false;
   }
 
+  // كل مقطع ملف مستقل، أو ملف واحد متعدد الإطارات (frame يجب أن يكون آخر معامل في الرابط)
   imageIdsFor(s) {
     const n = Math.max(1, s.sliceCount || 1);
+    if (n === 1 && (s.frames || 1) > 1) {
+      const base = new URL(s.urlFor(0), location.href).href;
+      return Array.from({ length: s.frames }, (_, i) => 'wadouri:' + base + (base.includes('?') ? '&' : '?') + 'frame=' + (i + 1));
+    }
     return Array.from({ length: n }, (_, i) => 'wadouri:' + new URL(s.urlFor(i), location.href).href);
   }
+  count(s) { return Math.max(s?.sliceCount || 1, s?.frames || 1); }
 
   // ---------- البناء ----------
   async start() {
@@ -260,7 +281,7 @@ class ProViewer {
     });
     this.engine.setViewports(inputs);
     this.toolGroup = this.makeToolGroup(this.uid + '-tg', inputs.map(x => x.viewportId), false);
-    const firstMulti = (this.series[this.panes[0].seriesIndex]?.sliceCount || 1) > 1;
+    const firstMulti = this.count(this.series[this.panes[0].seriesIndex]) > 1;
     if (!this._primaryChosen) this.primary = firstMulti ? 'scroll' : 'wl';
     this.setPrimary(this.primary);
     this.grid.querySelectorAll('.pv-series').forEach(sel => sel.addEventListener('change', e => this.changeSeries(+e.target.dataset.pane, +e.target.value)));
@@ -273,7 +294,7 @@ class ProViewer {
     return `
       <div class="pv-pane ${i === 0 ? 'active' : ''}" data-pane="${i}">
         <div class="pv-vp" oncontextmenu="return false"></div>
-        ${multi ? `<select class="pv-series" data-pane="${i}">${this.series.map((s, k) => `<option value="${k}" ${k === p.seriesIndex ? 'selected' : ''}>${esc(s.title)}${s.sliceCount > 1 ? ` (${s.sliceCount})` : ''}</option>`).join('')}</select>` : ''}
+        ${multi ? `<select class="pv-series" data-pane="${i}">${this.series.map((s, k) => `<option value="${k}" ${k === p.seriesIndex ? 'selected' : ''}>${esc(s.title)}${this.count(s) > 1 ? ` (${this.count(s)})` : ''}</option>`).join('')}</select>` : ''}
         <div class="pv-ov pv-tl"></div><div class="pv-ov pv-tr"></div><div class="pv-ov pv-bl"></div><div class="pv-ov pv-br"></div>
         <div class="pv-loading"><span class="pv-spin"></span></div>
         <div class="pv-err" hidden></div>
@@ -607,7 +628,7 @@ class ProViewer {
       play.querySelector('svg').outerHTML = ic(this.playing ? 'pause' : 'play');
     }
     const s = this.series[this.panes[this.activePane || 0]?.seriesIndex];
-    const multiSlice = (s?.sliceCount || 1) > 1;
+    const multiSlice = this.count(s) > 1;
     this.root.querySelector('.pv-cine').classList.toggle('pv-off', !multiSlice || this.mpr);
     const mprBtn = this.root.querySelector('[data-layout="mpr"]');
     if (mprBtn) mprBtn.disabled = (s?.sliceCount || 1) < 10;

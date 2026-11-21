@@ -421,6 +421,7 @@ app.post('/api/files', auth('patient'), upload.array('files', 3000), async (req,
         examDate: examDate || sd, center: center || '', notes: notes || '',
         originalName: items.length > 1 ? `${label}.zip` : items[0].name,
         storedName: items[0].f.filename, slices: items.length > 1 ? items.map(d => d.f.filename) : undefined,
+        frames: items.length === 1 && m.frames > 1 ? m.frames : undefined,
         mime: 'application/dicom', size, originalSize: size, kind: 'dicom', createdAt: now,
       });
     }
@@ -601,7 +602,7 @@ app.post('/api/s/:token/unlock', (req, res) => {
   save();
   const owner = db.users.find(u => u.id === s.ownerId);
   const files = s.fileIds.map(id => db.files.find(f => f.id === id)).filter(Boolean)
-    .map(f => ({ id: f.id, title: f.title, kind: f.kind, category: f.category, examDate: f.examDate, center: f.center, size: f.size, originalName: f.originalName, sliceCount: f.slices ? f.slices.length : 1 }));
+    .map(f => ({ id: f.id, title: f.title, kind: f.kind, category: f.category, examDate: f.examDate, center: f.center, size: f.size, originalName: f.originalName, sliceCount: f.slices ? f.slices.length : 1, frames: f.frames || 1 }));
   res.json({ key: shareKey(s), patientName: owner?.name, files, expiresAt: s.expiresAt });
 });
 
