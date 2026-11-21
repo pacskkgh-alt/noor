@@ -9,7 +9,9 @@ const media = require('./lib/media');
 const otp = require('./lib/otp');
 
 const { db, save, uid, UPLOADS } = store;
+const compression = require('compression');
 const app = express();
+app.use(compression({ filter: (req, res) => !/^\/api\/(files|s)\//.test(req.path) && compression.filter(req, res) }));
 const PORT = process.env.PORT || 3000;
 const SESSION_DAYS = 7;
 
@@ -761,6 +763,12 @@ app.get('/api/admin/activity', admin, (req, res) => {
 // ================= الواجهة =================
 app.use('/vendor/dicomParser.min.js', (req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/dicom-parser/dist/dicomParser.min.js')));
+app.use('/build', express.static(path.join(__dirname, 'public/build'), {
+  setHeaders: (res, p) => {
+    if (p.endsWith('.wasm')) res.setHeader('Content-Type', 'application/wasm');
+    res.setHeader('Cache-Control', /assets|chunks/.test(p) ? 'public, max-age=31536000, immutable' : 'no-cache');
+  },
+}));
 app.use(express.static(path.join(__dirname, 'public')));
 app.get(['/s/:token', '/', '/admin', '/admin/'], (req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
 

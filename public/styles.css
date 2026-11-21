@@ -332,9 +332,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .viewer-head .vh-title { display: flex; gap: 12px; align-items: center; min-width: 0; }
 .viewer-head .vh-title > div { min-width: 0; }
 .viewer-head h2 { font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.viewer-wrap { flex: 1; display: grid; grid-template-columns: 1fr; min-height: 0; }
-.viewer-wrap.with-notes { grid-template-columns: 1fr 320px; }
-.viewer-stage { background: #0D1820; position: relative; min-height: 0; display: flex; flex-direction: column; }
+.viewer-wrap { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; }
+.viewer-wrap.with-notes { grid-template-columns: minmax(0, 1fr) 320px; }
+.viewer-stage { background: #0D1820; position: relative; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .pdf-frame { flex: 1; border: 0; width: 100%; background: #fff; }
 .open-tab { position: absolute; bottom: 12px; inset-inline-start: 12px; background: rgba(13, 24, 32, .8); color: #fff; padding: 6px 12px; border-radius: 8px; font-size: 13px; }
 .img-stage { flex: 1; overflow: auto; display: grid; place-items: center; padding: 10px; }
@@ -472,7 +472,7 @@ blockquote { margin: 0 0 12px; background: var(--gold-l); border-inline-start: 3
   .hero-art { min-height: 340px; max-width: 460px; width: 100%; margin: 0 auto; }
   .features { grid-template-columns: 1fr 1fr; }
   .stat-grid { grid-template-columns: 1fr 1fr; }
-  .viewer-wrap.with-notes { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+  .viewer-wrap.with-notes { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
   .notes-panel { border-inline-start: 0; border-top: 1px solid var(--line); max-height: 40vh; }
   .share-card { grid-template-columns: 1fr; }
   .share-meta { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 10px; }

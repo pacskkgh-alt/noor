@@ -727,7 +727,10 @@ async function viewFiles(el) {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const f = files.find(x => x.id === b.closest('.file-card').dataset.id);
     const act = b.dataset.act;
-    if (act === 'view') openFileViewer(f, { url: `/api/files/${f.id}/content`, canDownload: true, notes: true });
+    if (act === 'view') openFileViewer(f, {
+      url: `/api/files/${f.id}/content`, canDownload: true, notes: true, viewerMode: 'simple',
+      dicomList: files.filter(x => x.kind === 'dicom').map(x => ({ file: x, url: `/api/files/${x.id}/content` })),
+    });
     if (act === 'share') openShare(files, [f.id]);
     if (act === 'edit') openEditFile(f, () => draw());
     if (act === 'delete' && await confirmBox(t('files.confirmDelete', { title: f.title }))) {
@@ -977,7 +980,24 @@ function openEditFile(f, onSaved) {
 }
 
 // ---- عارض الملفات ----
-function openFileViewer(f, { url, canDownload = true, notes = false, doctorMode = false } = {}) {
+// يحمّل عارض الأشعة الاحترافي عند أول حاجة إليه (ملف كبير، لا يُحمَّل مع الصفحة)
+function loadProViewer() {
+  if (window.NoorProViewer) return Promise.resolve(window.NoorProViewer);
+  if (!loadProViewer.p) {
+    loadProViewer.p = (async () => {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet'; link.href = '/build/viewer-pro.css';
+      document.head.appendChild(link);
+      await import('/build/viewer-pro.js');
+      return window.NoorProViewer || null;
+    })().catch(e => { console.warn('pro viewer unavailable, using basic viewer', e); loadProViewer.p = null; return null; });
+  }
+  return loadProViewer.p;
+}
+
+// dicomList: ملفات أشعة أخرى للمريض نفسه لتقسيم الشاشة [{ file, url }]
+// viewerMode: 'full' للطبيب ورابط المشاركة، 'simple' للمريض
+function openFileViewer(f, { url, canDownload = true, notes = false, doctorMode = false, dicomList = null, viewerMode = 'full' } = {}) {
   const dl = url + (url.includes('?') ? '&' : '?') + 'download=1';
   const m = modal(`
     <div class="modal-head viewer-head">
@@ -991,9 +1011,26 @@ function openFileViewer(f, { url, canDownload = true, notes = false, doctorMode 
     <div class="viewer-wrap ${notes ? 'with-notes' : ''}">
       <div class="viewer-stage" id="stage"></div>
       ${notes ? `<aside class="notes-panel" id="notes"><div class="loading"><span class="spinner"></span></div></aside>` : ''}
-    </div>`, { wide: true, onClose: () => window.NoorViewer.dispose() });
+    </div>`, { wide: true, onClose: () => { window.NoorViewer.dispose(); window.NoorProViewer?.dispose(); } });
   m.classList.add('modal-viewer');
-  window.NoorViewer.mount($('#stage', m), { url, kind: f.kind, t, sliceCount: f.sliceCount || 1 });
+  const stage = $('#stage', m);
+  if (f.kind === 'dicom') {
+    stage.innerHTML = `<div class="viewer-msg"><span class="spinner"></span> ${t('viewer.loading')}</div>`;
+    loadProViewer().then(pro => {
+      if (!stage.isConnected) return;
+      if (!pro) return window.NoorViewer.mount(stage, { url, kind: f.kind, t, sliceCount: f.sliceCount || 1 });
+      const list = (dicomList && dicomList.length ? dicomList : [{ file: f, url }]);
+      if (!list.some(x => x.file.id === f.id)) list.unshift({ file: f, url });
+      const series = list.map(x => {
+        const n = x.file.sliceCount || 1;
+        return { id: x.file.id, title: x.file.title, sliceCount: n, urlFor: i => (n > 1 ? x.url + (x.url.includes('?') ? '&' : '?') + 'slice=' + i : x.url) };
+      });
+      pro.mount(stage, { t, mode: viewerMode, series, index: Math.max(0, series.findIndex(x => x.id === f.id)) })
+        .catch(e => { console.error(e); window.NoorViewer.mount(stage, { url, kind: f.kind, t, sliceCount: f.sliceCount || 1 }); });
+    });
+  } else {
+    window.NoorViewer.mount(stage, { url, kind: f.kind, t, sliceCount: f.sliceCount || 1 });
+  }
   if (notes) loadNotes();
 
   async function loadNotes() {
@@ -1248,7 +1285,13 @@ async function viewInbox(el) {
   el.onclick = e => {
     const b = e.target.closest('.inbox-file'); if (!b) return;
     const f = shares.find(s => s.id === b.dataset.sid).files.find(x => x.id === b.dataset.fid);
-    openFileViewer(f, { url: `/api/files/${f.id}/content`, notes: true, doctorMode: true });
+    const owner = shares.find(s => s.id === b.dataset.sid);
+    const sameFiles = shares.filter(s => s.patientEmail === owner.patientEmail).flatMap(s => s.files)
+      .filter((x, i, a) => x.kind === 'dicom' && a.findIndex(y => y.id === x.id) === i);
+    openFileViewer(f, {
+      url: `/api/files/${f.id}/content`, notes: true, doctorMode: true, viewerMode: 'full',
+      dicomList: sameFiles.map(x => ({ file: x, url: `/api/files/${x.id}/content` })),
+    });
   };
 }
 
@@ -1610,7 +1653,10 @@ async function renderSharePage(token) {
     $('.pub-files').onclick = e => {
       const b = e.target.closest('[data-act=view]'); if (!b) return;
       const f = data.files.find(x => x.id === b.closest('.pub-file').dataset.id);
-      openFileViewer(f, { url: `/api/s/${token}/files/${f.id}?k=${data.key}` });
+      openFileViewer(f, {
+        url: `/api/s/${token}/files/${f.id}?k=${data.key}`, viewerMode: 'full',
+        dicomList: data.files.filter(x => x.kind === 'dicom').map(x => ({ file: x, url: `/api/s/${token}/files/${x.id}?k=${data.key}` })),
+      });
     };
   }
 }
