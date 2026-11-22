@@ -214,6 +214,15 @@ ar: {
   'viewer.presetCtOnly': 'الإعدادات الجاهزة مصممة لأشعة CT، وقد لا تناسب هذا النوع',
   'viewer.cineNeedSlices': 'التشغيل التلقائي يحتاج أكثر من مقطع', 'viewer.mouse': 'الفأرة',
   'viewer.mouseLeft': 'الزر الأيسر', 'viewer.mouseLeftD': 'الأداة المختارة', 'viewer.mouseWheel': 'العجلة', 'viewer.mouseRight': 'الزر الأيمن', 'viewer.mouseMiddle': 'الزر الأوسط',
+
+  'up.folderSub': 'محتوى قرص الأشعة من المستشفى كاملاً (CT / MRI). تُجمع الصور في دراسة واحدة، ويُتجاهل ما ليس أشعة',
+  'up.withReport': 'مع {n} تقرير PDF', 'up.ignoredCd': 'تجاهل {n} ملف ليس أشعة (صور مصدّرة وبرامج)',
+  'up.retrying': 'انقطع الاتصال، إعادة المحاولة ({n})…', 'up.batchProgress': '{done} من {total} ملف',
+  'up.noteStudy': 'دراسة «{title}»: {s} سلسلة، {n} صورة', 'up.noteDuplicates': 'تم تجاهل {n} صورة مرفوعة سابقاً',
+  'up.partial': 'تم رفع {done} من {total} ملف', 'up.retry': 'إكمال رفع الملفات المتبقية',
+  'files.studyLabel': '{mod} • {s} سلاسل • {n} صورة', 'files.studyLabel1': '{mod} • {n} صورة',
+  'viewer.report': 'التقرير', 'viewer.seriesList': 'سلاسل الدراسة', 'viewer.images': '{n} صورة',
+  'viewer.dragHint': 'اضغط على سلسلة لعرضها، أو اسحبها إلى أي شاشة عند التقسيم',
 },
 
 en: {
@@ -430,5 +439,14 @@ en: {
   'viewer.presetCtOnly': 'Presets are designed for CT and may not suit this modality',
   'viewer.cineNeedSlices': 'Cine needs more than one slice', 'viewer.mouse': 'Mouse',
   'viewer.mouseLeft': 'Left button', 'viewer.mouseLeftD': 'Selected tool', 'viewer.mouseWheel': 'Wheel', 'viewer.mouseRight': 'Right button', 'viewer.mouseMiddle': 'Middle button',
+
+  'up.folderSub': 'A whole hospital imaging CD (CT / MRI). Images are grouped into one study; non-imaging files are skipped',
+  'up.withReport': 'with {n} PDF report(s)', 'up.ignoredCd': '{n} non-imaging file(s) skipped (exported images, programs)',
+  'up.retrying': 'Connection lost, retrying ({n})…', 'up.batchProgress': '{done} of {total} files',
+  'up.noteStudy': 'Study “{title}”: {s} series, {n} images', 'up.noteDuplicates': '{n} image(s) already uploaded were skipped',
+  'up.partial': '{done} of {total} files uploaded', 'up.retry': 'Upload remaining files',
+  'files.studyLabel': '{mod} • {s} series • {n} images', 'files.studyLabel1': '{mod} • {n} images',
+  'viewer.report': 'Report', 'viewer.seriesList': 'Study series', 'viewer.images': '{n} images',
+  'viewer.dragHint': 'Click a series to view it, or drag it onto any view in split screen',
 },
 };

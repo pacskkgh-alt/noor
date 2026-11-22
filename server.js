@@ -7,6 +7,7 @@ const path = require('path');
 const store = require('./lib/store');
 const media = require('./lib/media');
 const otp = require('./lib/otp');
+const studies = require('./lib/studies');
 
 const { db, save, uid, UPLOADS } = store;
 const compression = require('compression');
@@ -57,18 +58,40 @@ function shareActive(s) {
 }
 function storedPath(name) { return path.join(UPLOADS, name); }
 function sendStoredFile(req, res, file, download) {
-  // دراسة أشعة متعددة المقاطع: تحميلها كاملة كملف ZIP، أو عرض مقطع محدد
-  if (file.slices && file.slices.length > 1) {
-    if (download) {
-      const pad = String(file.slices.length).length;
-      const base = (file.title || 'study').replace(/[\\/:*?"<>|]/g, '_');
-      return media.sendZip(res, file.slices.map((n, i) => ({ name: `${base}/${String(i + 1).padStart(pad, '0')}.dcm`, path: storedPath(n) })), base + '.zip');
-    }
-    const i = Math.min(Math.max(parseInt(req.query.slice, 10) || 0, 0), file.slices.length - 1);
-    return sendPath(res, storedPath(file.slices[i]), 'application/dicom', `${i + 1}.dcm`, false);
-  }
-  const type = file.kind === 'dicom' ? 'application/dicom' : file.kind === 'pdf' ? 'application/pdf' : (file.mime || 'application/octet-stream');
+  if (file.kind === 'dicom' && file.series) return sendStudy(req, res, file, download);
+  const type = file.kind === 'pdf' ? 'application/pdf' : (file.mime || 'application/octet-stream');
   sendPath(res, storedPath(file.storedName), type, file.originalName, download);
+}
+const safeName = v => String(v || '').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim().slice(0, 80) || 'file';
+// دراسة أشعة: ?series=رقم&slice=رقم لصورة، ?attachment=id لمرفق، ?download=1 للدراسة كاملة ZIP (مجلد لكل سلسلة)
+function sendStudy(req, res, f, download) {
+  if (req.query.attachment) {
+    const a = (f.attachments || []).find(x => x.id === req.query.attachment);
+    if (!a) return res.status(404).json({ error: 'not_found' });
+    return sendPath(res, storedPath(a.storedName), a.mime || 'application/pdf', a.originalName, download);
+  }
+  if (download) {
+    const entries = [];
+    f.series.forEach((s, k) => {
+      const dir = `${String(Number.isFinite(s.number) ? s.number : k + 1).padStart(2, '0')} ${safeName(s.description || s.modality || 'series')}`;
+      const pad = String(s.slices.length).length;
+      s.slices.forEach((x, i) => entries.push({ name: `${safeName(f.title)}/${dir}/${String(i + 1).padStart(Math.max(4, pad), '0')}.dcm`, path: storedPath(x.n) }));
+    });
+    (f.attachments || []).forEach(a => entries.push({ name: `${safeName(f.title)}/${safeName(a.originalName)}`, path: storedPath(a.storedName) }));
+    return media.sendZip(res, entries, safeName(f.title) + '.zip');
+  }
+  const s = f.series[Math.min(Math.max(parseInt(req.query.series, 10) || 0, 0), f.series.length - 1)];
+  if (!s) return res.status(404).json({ error: 'not_found' });
+  const i = Math.min(Math.max(parseInt(req.query.slice, 10) || 0, 0), s.slices.length - 1);
+  sendPath(res, storedPath(s.slices[i].n), 'application/dicom', `${i + 1}.dcm`, false);
+}
+// تسجيل المشاهدة مرة واحدة كل 10 دقائق لكل ملف (العارض يطلب مئات الصور)
+const recentViews = new Map();
+function shouldLogView(key) {
+  const now = Date.now(), last = recentViews.get(key) || 0;
+  if (now - last < 600e3) return false;
+  recentViews.set(key, now);
+  return true;
 }
 function sendPath(res, p, type, name, download) {
   if (!fs.existsSync(p)) return res.status(404).json({ error: 'not_found' });
@@ -78,7 +101,7 @@ function sendPath(res, p, type, name, download) {
   res.sendFile(p, { headers: { 'Content-Type': type } });
 }
 function removeFileFromDisk(file) {
-  for (const n of (file.slices || [file.storedName])) { try { fs.unlinkSync(storedPath(n)); } catch {} }
+  for (const n of studies.storedNamesOf(file)) { try { fs.unlinkSync(storedPath(n)); } catch {} }
 }
 function unlinkQuiet(p) { try { fs.unlinkSync(p); } catch {} }
 
@@ -353,25 +376,30 @@ function canAccessFile(user, file) {
   return false;
 }
 function fileWithExtras(f) {
-  const { slices, ...rest } = f;
-  return { ...rest, sliceCount: slices ? slices.length : 1, notesCount: db.notes.filter(n => n.fileId === f.id).length };
+  const { series, attachments, storedName, studyKey, ...rest } = f;
+  const extra = f.kind === 'dicom' && series ? studies.publicStudy(f) : {};
+  return { ...rest, ...extra, notesCount: db.notes.filter(n => n.fileId === f.id).length };
 }
 
 app.get('/api/files', auth('patient'), (req, res) => {
   res.json({ files: db.files.filter(f => f.ownerId === req.user.id).map(fileWithExtras) });
 });
 
-app.post('/api/files', auth('patient'), upload.array('files', 3000), async (req, res, next) => {
-  const uploaded = req.files || [];
+// الرفع: الملفات العادية بطاقة لكل ملف، وصور الأشعة تُجمع حسب الدراسة (وتُدمج مع الدراسة نفسها إن رُفعت سابقاً)
+// الأقراص الكبيرة تُرفع على دفعات؛ كل دفعة تُضاف لنفس الدراسة تلقائياً. حقل attachments: تقارير PDF من القرص تُرفق بالدراسة
+app.post('/api/files', auth('patient'), upload.fields([{ name: 'files', maxCount: 3000 }, { name: 'attachments', maxCount: 20 }]), async (req, res, next) => {
+  const uploaded = req.files?.files || [];
+  const attachFiles = req.files?.attachments || [];
+  const all = [...uploaded, ...attachFiles];
   try {
     const { title, category, examDate, center, notes, acceptTerms } = req.body;
     // الموافقة على الشروط مطلوبة قبل أول رفع
     if (!req.user.termsAcceptedAt) {
-      if (acceptTerms !== '1') { uploaded.forEach(f => unlinkQuiet(f.path)); return res.status(400).json({ error: 'terms_required' }); }
+      if (acceptTerms !== '1') { all.forEach(f => unlinkQuiet(f.path)); return res.status(400).json({ error: 'terms_required' }); }
       req.user.termsAcceptedAt = new Date().toISOString();
       log(req, req.user.id, 'terms_accepted');
     }
-    if (!uploaded.length) return res.status(400).json({ error: 'no_files' });
+    if (!uploaded.length && !attachFiles.length) return res.status(400).json({ error: 'no_files' });
 
     const skipped = [], singles = [], dicoms = [];
     for (const f of uploaded) {
@@ -380,19 +408,13 @@ app.post('/api/files', auth('patient'), upload.array('files', 3000), async (req,
       if (kind === 'dicom') {
         const meta = media.readDicomMeta(f.path);
         if (!meta) { unlinkQuiet(f.path); skipped.push({ name: f.originalname, reason: 'not_image' }); continue; }
-        dicoms.push({ f, meta, name: f.originalname });
+        dicoms.push({ storedName: f.filename, size: fs.statSync(f.path).size, name: f.originalname, meta });
       } else singles.push({ f, kind });
     }
 
-    // تجميع صور الأشعة حسب السلسلة: كل سلسلة = بطاقة واحدة
-    const series = new Map();
-    for (const d of dicoms) {
-      if (!series.has(d.meta.seriesUID)) series.set(d.meta.seriesUID, []);
-      series.get(d.meta.seriesUID).push(d);
-    }
-    const total = singles.length + series.size;
     const now = new Date().toISOString();
     const cat = ['imaging', 'lab', 'report', 'prescription', 'other'].includes(category) ? category : 'other';
+    const total = singles.length + (dicoms.length ? 1 : 0);
     const nameFor = fallback => (total === 1 && title) ? title : (title ? `${title} — ${fallback}` : fallback);
     const created = [];
 
@@ -408,32 +430,41 @@ app.post('/api/files', auth('patient'), upload.array('files', 3000), async (req,
         catch (e) { console.error('image compression skipped:', e.message); }
       }
       if (kind === 'video') file.processing = media.hasFfmpeg;
-      created.push(file);
-    }
-    for (const items of series.values()) {
-      media.sortSlices(items);
-      const m = items[0].meta;
-      const label = [m.modality, m.seriesDescription].filter(Boolean).join(' ') || items[0].name;
-      const sd = m.studyDate.length === 8 ? `${m.studyDate.slice(0, 4)}-${m.studyDate.slice(4, 6)}-${m.studyDate.slice(6)}` : '';
-      const size = items.reduce((a, d) => a + d.f.size, 0);
-      created.push({
-        id: uid(), ownerId: req.user.id, title: nameFor(label), category: 'imaging',
-        examDate: examDate || sd, center: center || '', notes: notes || '',
-        originalName: items.length > 1 ? `${label}.zip` : items[0].name,
-        storedName: items[0].f.filename, slices: items.length > 1 ? items.map(d => d.f.filename) : undefined,
-        frames: items.length === 1 && m.frames > 1 ? m.frames : undefined,
-        mime: 'application/dicom', size, originalSize: size, kind: 'dicom', createdAt: now,
-      });
-    }
-    for (const file of created) {
       db.files.push(file);
+      created.push(file);
       log(req, req.user.id, 'file_uploaded', { fileId: file.id, title: file.title });
       if (file.processing) enqueueVideo(file.id);
     }
+
+    let touched = [];
+    if (dicoms.length) {
+      const r = studies.ingest(db, req.user.id, dicoms, { title: title || '', examDate: examDate || '', center: center || '', notes: notes || '', now });
+      r.duplicates.forEach(n => unlinkQuiet(storedPath(n)));
+      if (r.duplicates.length) skipped.push({ name: `${r.duplicates.length}`, reason: 'duplicate' });
+      r.created.forEach(st => log(req, req.user.id, 'file_uploaded', { fileId: st.id, title: st.title }));
+      touched = r.touched.length ? r.touched : r.created;
+    }
+
+    // تقارير PDF من القرص: تُرفق بالدراسة (أو تُرفع كملف عادي إن لم توجد دراسة)
+    const target = touched.slice().sort((a, b) => b.size - a.size)[0]
+      || (req.body.studyId && db.files.find(x => x.id === req.body.studyId && x.ownerId === req.user.id && x.kind === 'dicom'));
+    for (const f of attachFiles) {
+      if (media.detectKind(f.path, f.originalname) !== 'pdf') { unlinkQuiet(f.path); continue; }
+      if (target) {
+        target.attachments = target.attachments || [];
+        target.attachments.push({ id: uid(), storedName: f.filename, originalName: f.originalname, mime: 'application/pdf', size: f.size, kind: 'pdf' });
+        studies.refresh(target);
+        if (!touched.includes(target)) touched.push(target);
+      } else {
+        const file = { id: uid(), ownerId: req.user.id, title: f.originalname, category: 'report', examDate: examDate || '', center: center || '', notes: '', originalName: f.originalname, storedName: f.filename, mime: 'application/pdf', size: f.size, originalSize: f.size, kind: 'pdf', createdAt: now };
+        db.files.push(file); created.push(file);
+      }
+    }
     save();
-    res.json({ files: created.map(fileWithExtras), skipped });
+    res.json({ files: [...created, ...touched.filter(x => !created.includes(x))].map(fileWithExtras), skipped });
   } catch (e) {
-    uploaded.forEach(f => { if (!db.files.some(x => x.storedName === f.filename || (x.slices || []).includes(f.filename))) unlinkQuiet(f.path); });
+    const used = new Set(db.files.flatMap(x => studies.storedNamesOf(x)));
+    all.forEach(f => { if (!used.has(f.filename)) unlinkQuiet(f.path); });
     next(e);
   }
 });
@@ -463,7 +494,7 @@ app.delete('/api/files/:id', auth('patient'), (req, res) => {
 app.get('/api/files/:id/content', auth(), (req, res) => {
   const f = db.files.find(x => x.id === req.params.id);
   if (!canAccessFile(req.user, f)) return res.status(404).json({ error: 'not_found' });
-  if (f.ownerId !== req.user.id && !(parseInt(req.query.slice, 10) > 0)) {
+  if (f.ownerId !== req.user.id && shouldLogView(req.user.id + ':' + f.id)) {
     log(req, req.user.id, 'file_viewed_by_doctor', { fileId: f.id, title: f.title, ownerId: f.ownerId });
     save();
   }
@@ -602,7 +633,8 @@ app.post('/api/s/:token/unlock', (req, res) => {
   save();
   const owner = db.users.find(u => u.id === s.ownerId);
   const files = s.fileIds.map(id => db.files.find(f => f.id === id)).filter(Boolean)
-    .map(f => ({ id: f.id, title: f.title, kind: f.kind, category: f.category, examDate: f.examDate, center: f.center, size: f.size, originalName: f.originalName, sliceCount: f.slices ? f.slices.length : 1, frames: f.frames || 1 }));
+    .map(f => ({ id: f.id, title: f.title, kind: f.kind, category: f.category, examDate: f.examDate, center: f.center, size: f.size, originalName: f.originalName,
+      ...(f.kind === 'dicom' && f.series ? studies.publicStudy(f) : {}) }));
   res.json({ key: shareKey(s), patientName: owner?.name, files, expiresAt: s.expiresAt });
 });
 
@@ -613,7 +645,8 @@ app.get('/api/s/:token/files/:fid', (req, res) => {
   }
   const f = db.files.find(x => x.id === req.params.fid);
   if (!f) return res.status(404).json({ error: 'not_found' });
-  const firstRequest = (!req.headers.range || req.headers.range.startsWith('bytes=0-')) && !(parseInt(req.query.slice, 10) > 0);
+  const firstRequest = (!req.headers.range || req.headers.range.startsWith('bytes=0-'))
+    && (req.query.download === '1' || shouldLogView(s.id + ':' + f.id + ':' + (req.query.attachment || '')));
   if (firstRequest) {
     s.accessLog.push({ at: new Date().toISOString(), ip: req.ip, action: req.query.download === '1' ? 'downloaded' : 'viewed', fileId: f.id, title: f.title });
     save();
@@ -780,6 +813,8 @@ app.use((err, req, res, next) => {
 });
 
 store.ensureSeed(hashPassword);
+// تحويل الأشعة المحفوظة بالشكل القديم (بطاقة لكل سلسلة) إلى دراسات
+if (studies.migrate(db, n => media.readDicomMeta(storedPath(n)))) { save(); console.log('تم تجميع الأشعة السابقة في دراسات.'); }
 // إكمال ضغط الفيديوهات التي توقفت بسبب إعادة تشغيل الخادم
 db.files.filter(f => f.processing).forEach(f => enqueueVideo(f.id));
 app.listen(PORT, () => console.log(`✨ منصة نور تعمل على http://localhost:${PORT}`));

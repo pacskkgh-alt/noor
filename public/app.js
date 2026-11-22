@@ -657,7 +657,7 @@ async function viewFiles(el) {
     drawStats();
     const q = ui.q.trim().toLowerCase();
     const list = files.filter(f => (ui.cat === 'all' || f.category === ui.cat) &&
-      (!q || [f.title, f.center, f.originalName, f.notes].join(' ').toLowerCase().includes(q)))
+      (!q || [f.title, f.center, f.originalName, f.notes, ...(f.series || []).map(x => x.description), ...(f.modalities || [])].join(' ').toLowerCase().includes(q)))
       .sort((a, b) => (b.examDate || b.createdAt).localeCompare(a.examDate || a.createdAt));
     if (!files.length) {
       grid.innerHTML = emptyState('upload', t('files.emptyTitle'), t('files.emptySub'), `<button class="btn btn-primary" id="empty-up">${icon('upload')} ${t('files.upload')}</button>`);
@@ -668,7 +668,7 @@ async function viewFiles(el) {
     grid.innerHTML = list.map(f => `
       <article class="file-card ${ui.selected.has(f.id) ? 'selected' : ''}" data-id="${f.id}">
         <label class="file-check" title="${t('select')}"><input type="checkbox" ${ui.selected.has(f.id) ? 'checked' : ''}><span></span></label>
-        <button class="file-thumb c-${f.category}" data-act="view">${icon(kindIcon(f.kind))}<small>${t('kind.' + f.kind)}${Math.max(f.sliceCount || 1, f.frames || 1) > 1 ? ' • ' + t('files.slices', { n: Math.max(f.sliceCount || 1, f.frames || 1) }) : ''}</small></button>
+        <button class="file-thumb c-${f.category}" data-act="view">${icon(kindIcon(f.kind))}<small>${f.kind === 'dicom' && f.series ? studyLabel(f) : t('kind.' + f.kind)}</small></button>
         ${f.processing ? `<span class="proc-badge"><span class="spinner sm"></span> ${t('files.compressing')}</span>` : ''}
         <div class="file-body">
           <h3 title="${esc(f.title)}">${esc(f.title)}</h3>
@@ -744,10 +744,17 @@ async function viewFiles(el) {
 
   function openUpload() {
     openUploadModal(created => {
-      files.push(...created); draw();
+      // الدراسة التي أُضيفت لها صور تُستبدل ببطاقتها المحدثة بدل تكرارها
+      for (const c of created) { const i = files.findIndex(x => x.id === c.id); if (i >= 0) files[i] = c; else files.push(c); }
+      draw();
       if (created.some(f => f.processing)) toast(t('up.videoProcessing'));
     });
   }
+}
+
+function studyLabel(f) {
+  const mod = (f.modalities || []).join('/') || 'DICOM';
+  return f.seriesCount > 1 ? t('files.studyLabel', { mod, s: f.seriesCount, n: f.imageCount }) : t('files.studyLabel1', { mod, n: f.imageCount });
 }
 
 function savedLine(f) {
@@ -769,17 +776,52 @@ async function detectClientKind(file) {
   if (UP_EXT[ext]) return UP_EXT[ext];
   if (file.size > 132) {
     try { if (await file.slice(128, 132).text() === 'DICM') return 'dicom'; } catch {}
+    // ملفات أقراص قديمة بلا ترويسة: تبدأ مباشرة بالمجموعة 0008
+    try {
+      const b = new DataView(await file.slice(0, 4).arrayBuffer());
+      if (b.getUint16(0, true) === 0x0008 && b.getUint16(2, true) < 0x0100) return 'dicom';
+    } catch {}
   }
   return null;
+}
+
+// قراءة مجلد مسحوب إلى منطقة الإفلات (مع المجلدات الفرعية)
+async function filesFromDrop(dt) {
+  const entries = [...(dt.items || [])].map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (!entries.some(e => e.isDirectory)) return { files: [...dt.files], folder: false };
+  const out = [];
+  const walk = async entry => {
+    if (entry.isFile) { out.push(await new Promise((res, rej) => entry.file(res, rej))); return; }
+    const reader = entry.createReader();
+    for (;;) {
+      const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+      if (!batch.length) break;
+      for (const e of batch) await walk(e);
+    }
+  };
+  for (const e of entries) await walk(e);
+  return { files: out, folder: true };
+}
+
+// تقسيم ملفات الأشعة إلى دفعات (عدد وحجم محدودان) حتى لا يتعطل رفع الأقراص الكبيرة
+function makeBatches(files, maxCount = 40, maxBytes = 40 * 1024 * 1024) {
+  const batches = [];
+  let cur = [], bytes = 0;
+  for (const f of files) {
+    if (cur.length && (cur.length >= maxCount || bytes + f.size > maxBytes)) { batches.push(cur); cur = []; bytes = 0; }
+    cur.push(f); bytes += f.size;
+  }
+  if (cur.length) batches.push(cur);
+  return batches;
 }
 
 async function openUploadModal(onDone) {
   const centers = await getCenters().catch(() => []);
   const needTerms = !state.user.termsAcceptedAt;
-  const items = []; // { id, kind, files[], name, size, url, state: 'ready'|'skip'|'uploading'|'done'|'error', note }
+  const items = []; // { id, kind, files[], attachments[], ignored, name, size, url, state: 'ready'|'skip'|'uploading'|'done'|'error', note }
   const urls = [];
   let busy = false, finished = false, seq = 0;
-  const created = [];
+  const created = new Map(); // id -> آخر نسخة من البطاقة (الدفعات تعيد نفس الدراسة)
 
   const m = modal(`
     <div class="modal-head"><h2>${icon('upload')} ${t('up.title')}</h2><button class="icon-btn" data-close>${icon('x')}</button></div>
@@ -817,7 +859,7 @@ async function openUploadModal(onDone) {
         <button type="button" class="btn btn-ghost" data-close id="up-cancel">${t('cancel')}</button>
         <button class="btn btn-primary" type="submit" id="up-submit" disabled>${icon('check')} ${t('up.approve')}</button>
       </div>
-    </form>`, { wide: true, onClose: () => { urls.forEach(u => URL.revokeObjectURL(u)); if (created.length) onDone(created); } });
+    </form>`, { wide: true, onClose: () => { urls.forEach(u => URL.revokeObjectURL(u)); if (created.size) onDone([...created.values()]); } });
 
   const list = $('#review-list', m), submit = $('#up-submit', m), form = $('#up-form', m);
   const termsBox = $('#terms', m);
@@ -845,41 +887,61 @@ async function openUploadModal(onDone) {
         <div class="rv-text">
           <b title="${esc(it.name)}">${esc(it.name)}</b>
           <small>${it.kind && it.kind !== 'ignore' ? t('kind.' + it.kind) + ' • ' : ''}${it.files.length > 1 ? t('up.nFiles', { n: it.files.length }) + ' • ' : ''}${fmtSize(it.size)}</small>
-          ${it.state === 'uploading' ? `<div class="progress sm"><i style="width:${it.pct || 0}%"></i></div>` : ''}
+          ${it.state === 'uploading' ? `<div class="progress sm"><i style="width:${it.pct || 0}%"></i></div><small class="rv-pct muted">${esc(it.progressText || '')}</small>` : ''}
           ${it.note ? `<small class="rv-note ${it.state === 'done' ? 'ok' : it.state === 'skip' || it.state === 'error' ? 'bad' : ''}">${it.note}</small>` : ''}
         </div>
         <div class="rv-status">${statusHtml(it)}</div>
       </li>`).join('');
-    submit.disabled = busy || !v.length || (termsBox && !termsBox.checked);
+    submit.disabled = busy || !v.length || (termsBox && !termsBox.checked && !state.user.termsAcceptedAt);
   }
 
-  async function addFiles(fileList) {
+  function dicomItem() {
+    let study = items.find(i => i.kind === 'dicom' && i.state === 'ready');
+    if (!study) { study = { id: ++seq, kind: 'dicom', files: [], attachments: [], ignored: 0, size: 0, state: 'ready' }; items.push(study); }
+    return study;
+  }
+  function studyNote(st) {
+    const parts = [];
+    if (st.attachments.length) parts.push(t('up.withReport', { n: st.attachments.length }));
+    if (st.ignored) parts.push(t('up.ignoredCd', { n: st.ignored }));
+    st.note = parts.join(' • ');
+  }
+
+  async function addFiles(fileList, inFolder = false) {
     if (busy || finished) return;
-    for (const f of [...fileList]) {
-      const kind = await detectClientKind(f);
+    const classified = [];
+    for (const f of [...fileList]) classified.push({ f, kind: await detectClientKind(f) });
+    // مجلد قرص أشعة: نأخذ الأشعة وتقارير PDF فقط، ونتجاهل الصور المصدّرة والبرامج
+    const isCd = inFolder && classified.some(x => x.kind === 'dicom');
+    for (const { f, kind } of classified) {
       if (kind === 'ignore') continue;
       if (kind === 'dicom') {
-        let study = items.find(i => i.kind === 'dicom' && i.state === 'ready');
-        if (!study) { study = { id: ++seq, kind: 'dicom', files: [], size: 0, state: 'ready' }; items.push(study); }
-        study.files.push(f); study.size += f.size;
-        study.name = study.files.length > 1 ? t('up.dicomStudy') : f.name;
+        const st = dicomItem();
+        st.files.push(f); st.size += f.size;
+        st.name = st.files.length > 1 ? t('up.dicomStudy') : f.name;
+        continue;
+      }
+      if (isCd) {
+        const st = dicomItem();
+        if (kind === 'pdf') { st.attachments.push(f); st.size += f.size; } else st.ignored++;
         continue;
       }
       const it = { id: ++seq, kind, files: [f], name: f.name, size: f.size, state: kind ? 'ready' : 'skip', note: kind ? '' : t('up.unsupported') };
       if (kind === 'image' || kind === 'video') { it.url = URL.createObjectURL(f); urls.push(it.url); }
       items.push(it);
     }
+    items.filter(i => i.kind === 'dicom' && i.state === 'ready').forEach(studyNote);
     // الأشعة تُصنَّف تلقائياً، ولا نغيّر تصنيف بقية الملفات
     if (items.length && items.every(i => i.kind === 'dicom' || i.state === 'skip')) m.querySelector('[name=category]').value = 'imaging';
     drawList();
   }
 
   $('#up-input', m).onchange = e => { addFiles(e.target.files); e.target.value = ''; };
-  $('#up-folder', m).onchange = e => { addFiles(e.target.files); e.target.value = ''; };
+  $('#up-folder', m).onchange = e => { addFiles(e.target.files, true); e.target.value = ''; };
   const dz = $('#dz', m);
   ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('over'); }));
   ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('over'); }));
-  dz.addEventListener('drop', e => addFiles(e.dataTransfer.files));
+  dz.addEventListener('drop', async e => { const r = await filesFromDrop(e.dataTransfer); addFiles(r.files, r.folder); });
   list.onclick = e => {
     const b = e.target.closest('[data-remove]'); if (!b) return;
     items.splice(items.findIndex(i => i.id === +b.dataset.remove), 1);
@@ -887,39 +949,82 @@ async function openUploadModal(onDone) {
   };
   if (termsBox) termsBox.onchange = drawList;
 
-  function send(it, meta) {
+  function post(files, attachments, meta, onProgress) {
     return new Promise(resolve => {
       const fd = new FormData();
       Object.entries(meta).forEach(([k, v]) => fd.append(k, v));
-      it.files.forEach(f => fd.append('files', f));
+      files.forEach(f => fd.append('files', f));
+      (attachments || []).forEach(f => fd.append('attachments', f));
       const xhr = new XMLHttpRequest();
       xhr.open('POST', '/api/files');
-      xhr.upload.onprogress = ev => {
-        if (!ev.lengthComputable) return;
-        it.pct = Math.round(ev.loaded / ev.total * 100);
-        const bar = list.querySelector(`[data-id="${it.id}"] .progress i`);
-        if (bar) bar.style.width = it.pct + '%';
-      };
-      xhr.onload = () => { let d = {}; try { d = JSON.parse(xhr.responseText); } catch {} resolve({ ok: xhr.status === 200, data: d }); };
-      xhr.onerror = () => resolve({ ok: false, data: { error: 'server_error' } });
+      xhr.upload.onprogress = ev => { if (ev.lengthComputable) onProgress(ev.loaded, ev.total); };
+      xhr.onload = () => { let d = {}; try { d = JSON.parse(xhr.responseText); } catch {} resolve({ ok: xhr.status === 200, status: xhr.status, data: d }); };
+      xhr.onerror = () => resolve({ ok: false, status: 0, data: { error: 'server_error' } });
       xhr.send(fd);
     });
+  }
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  function setPct(it, pct) {
+    it.pct = pct;
+    const bar = list.querySelector(`[data-id="${it.id}"] .progress i`);
+    if (bar) bar.style.width = pct + '%';
+    const lbl = list.querySelector(`[data-id="${it.id}"] .rv-pct`);
+    if (lbl) lbl.textContent = it.progressText || '';
+  }
+  const bytesOf = arr => (arr || []).reduce((a, f) => a + f.size, 0);
+
+  // يرفع عنصراً (ملف عادي = طلب واحد، دراسة أشعة = دفعات متتالية مع إعادة المحاولة عند انقطاع الاتصال)
+  async function send(it, meta) {
+    const batches = it.kind === 'dicom' ? makeBatches(it.files) : [it.files];
+    const total = bytesOf(it.files) + bytesOf(it.attachments) || 1;
+    let sentBytes = 0, sentFiles = 0;
+    const results = [], skipped = [];
+    for (let b = 0; b < batches.length; b++) {
+      const files = batches[b];
+      const att = b === 0 ? (it.attachments || []) : [];
+      const batchBytes = bytesOf(files) + bytesOf(att);
+      let r;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        if (attempt) { it.progressText = t('up.retrying', { n: attempt }); setPct(it, it.pct); await sleep(2000 * 2 ** (attempt - 1)); }
+        r = await post(files, att, meta, (loaded, tot) => {
+          it.progressText = batches.length > 1 ? t('up.batchProgress', { done: sentFiles + Math.round(files.length * loaded / tot), total: it.files.length }) : '';
+          setPct(it, Math.min(100, Math.round((sentBytes + batchBytes * loaded / tot) / total * 100)));
+        });
+        if (r.ok || (r.status >= 400 && r.status < 500 && r.status !== 429)) break; // أخطاء البيانات لا تُعاد
+      }
+      if (!r.ok) {
+        it.remaining = batches.slice(b).flat();
+        it.remainingAttachments = att;
+        return { ok: false, data: r.data, results, skipped, uploadedFiles: sentFiles };
+      }
+      sentBytes += batchBytes;
+      sentFiles += files.length;
+      results.push(...(r.data.files || []));
+      skipped.push(...(r.data.skipped || []));
+      if (!state.user.termsAcceptedAt) state.user.termsAcceptedAt = new Date().toISOString();
+    }
+    it.remaining = null;
+    return { ok: true, results, skipped };
   }
 
   form.onsubmit = async e => {
     e.preventDefault();
     if (finished) return closeModal();
     const err = $('#up-err', m); err.hidden = true;
+    // إعادة المحاولة: ما بقي من الدفعات التي لم تُرفع
+    items.filter(i => i.state === 'error' && i.remaining && i.remaining.length).forEach(i => {
+      i.files = i.remaining; i.attachments = i.remainingAttachments || []; i.state = 'ready'; i.note = '';
+    });
     const todo = validItems().filter(i => i.state === 'ready');
     if (!todo.length) return;
-    if (termsBox && !termsBox.checked) { err.textContent = t('err.terms_required'); err.hidden = false; return; }
+    if (termsBox && !termsBox.checked && !state.user.termsAcceptedAt) { err.textContent = t('err.terms_required'); err.hidden = false; return; }
     busy = true;
-    $('#pickers', m).hidden = true; $('#meta', m).hidden = true; $('#up-cancel', m).hidden = true;
+    $('#pickers', m).hidden = true; $('#meta', m).hidden = true; $('#up-cancel', m).hidden = true; $('#summary', m).hidden = true;
     submit.innerHTML = `<span class="spinner sm light"></span> ${t('up.uploading')}`;
     const fdv = new FormData(form);
     const title = (fdv.get('title') || '').trim();
     for (const it of todo) {
-      it.state = 'uploading'; it.pct = 0; drawList();
+      it.state = 'uploading'; it.pct = 0; it.progressText = ''; drawList();
       const meta = {
         title: title && todo.length > 1 ? (it.kind === 'dicom' ? title : `${title} — ${it.name}`) : title,
         category: it.kind === 'dicom' ? 'imaging' : fdv.get('category'),
@@ -927,32 +1032,40 @@ async function openUploadModal(onDone) {
         acceptTerms: termsBox && termsBox.checked ? '1' : '',
       };
       const r = await send(it, meta);
-      if (r.ok && r.data.files && r.data.files.length) {
+      // نسخة أحدث من نفس البطاقة تحل محل السابقة (الدفعات تعيد الدراسة نفسها)
+      const mine = new Map();
+      r.results.forEach(f => { created.set(f.id, f); mine.set(f.id, f); });
+      const dups = r.skipped.filter(x => x.reason === 'duplicate').reduce((a, x) => a + (+x.name || 1), 0);
+      const notImg = r.skipped.filter(x => x.reason !== 'duplicate').length;
+      const notes = [...mine.values()].map(f => {
+        if (f.processing) return t('up.noteVideo');
+        if (f.kind === 'dicom') return t('up.noteStudy', { title: esc(f.title), s: f.seriesCount, n: f.imageCount }) + (f.attachments && f.attachments.length ? ' • ' + t('up.withReport', { n: f.attachments.length }) : '');
+        if (f.originalSize > f.size) return t('up.noteSaved', { from: fmtSize(f.originalSize), to: fmtSize(f.size), pct: Math.round((1 - f.size / f.originalSize) * 100) });
+        return t('up.noteDone');
+      });
+      if (dups) notes.push(t('up.noteDuplicates', { n: dups }));
+      if (notImg) notes.push(t('up.noteSkipped', { n: notImg }));
+      if (r.ok && (mine.size || dups)) {
         it.state = 'done';
-        if (!state.user.termsAcceptedAt) state.user.termsAcceptedAt = new Date().toISOString();
-        created.push(...r.data.files);
-        const notes = r.data.files.map(f => {
-          if (f.processing) return t('up.noteVideo');
-          if (f.kind === 'dicom') return t('up.noteDicom', { n: f.sliceCount, title: esc(f.title) });
-          if (f.originalSize > f.size) return t('up.noteSaved', { from: fmtSize(f.originalSize), to: fmtSize(f.size), pct: Math.round((1 - f.size / f.originalSize) * 100) });
-          return t('up.noteDone');
-        });
-        if (r.data.skipped && r.data.skipped.length) notes.push(t('up.noteSkipped', { n: r.data.skipped.length }));
-        it.note = notes.join('<br>');
       } else {
         it.state = 'error';
-        it.note = esc(r.data.skipped && r.data.skipped.length ? t('up.unsupported') : errMsg({ code: r.data.error }));
+        if (it.remaining && it.remaining.length && r.uploadedFiles) notes.unshift(t('up.partial', { done: r.uploadedFiles, total: r.uploadedFiles + it.remaining.length }));
+        notes.push(esc(r.ok ? t('up.unsupported') : errMsg({ code: r.data && r.data.error })));
       }
+      it.note = notes.join('<br>');
+      it.progressText = '';
       drawList();
     }
-    busy = false; finished = true;
+    busy = false;
     const ok = todo.filter(i => i.state === 'done').length;
+    const canRetry = todo.some(i => i.state === 'error' && i.remaining && i.remaining.length);
+    finished = !canRetry;
     const summary = $('#summary', m);
     summary.hidden = false;
     summary.className = 'up-summary ' + (ok === todo.length ? 'ok' : 'warn');
     summary.innerHTML = `${icon(ok === todo.length ? 'check' : 'alert')} ${t('up.summary', { ok, total: todo.length })}`;
     submit.disabled = false;
-    submit.innerHTML = `${icon('check')} ${t('up.finish')}`;
+    submit.innerHTML = canRetry ? `${icon('refresh')} ${t('up.retry')}` : `${icon('check')} ${t('up.finish')}`;
     drawList();
   };
 }
@@ -1004,6 +1117,7 @@ function openFileViewer(f, { url, canDownload = true, notes = false, doctorMode 
       <div class="vh-title"><span class="file-ic c-${f.category || 'other'}">${icon(kindIcon(f.kind))}</span><div><h2>${esc(f.title)}</h2>
         <small class="muted">${[f.category ? t('cat.' + f.category) : '', f.examDate ? fmtDate(f.examDate) : '', esc(f.center || '')].filter(Boolean).join(' • ')}</small></div></div>
       <div class="row-gap">
+        ${(f.attachments || []).map(a => `<a class="btn btn-ghost btn-sm" target="_blank" rel="noopener" href="${url}${url.includes('?') ? '&' : '?'}attachment=${encodeURIComponent(a.id)}" title="${esc(a.originalName)}">${icon('pdf')} <span class="hide-sm">${t('viewer.report')}</span></a>`).join('')}
         ${canDownload ? `<a class="btn btn-ghost btn-sm" href="${dl}">${icon('download')} <span class="hide-sm">${t('download')}</span></a>` : ''}
         <button class="icon-btn" data-close>${icon('x')}</button>
       </div>
@@ -1018,15 +1132,26 @@ function openFileViewer(f, { url, canDownload = true, notes = false, doctorMode 
     stage.innerHTML = `<div class="viewer-msg"><span class="spinner"></span> ${t('viewer.loading')}</div>`;
     loadProViewer().then(pro => {
       if (!stage.isConnected) return;
-      if (!pro) return window.NoorViewer.mount(stage, { url, kind: f.kind, t, sliceCount: f.sliceCount || 1 });
       const list = (dicomList && dicomList.length ? dicomList : [{ file: f, url }]);
-      if (!list.some(x => x.file.id === f.id)) list.unshift({ file: f, url });
-      const series = list.map(x => {
-        const n = x.file.sliceCount || 1;
-        return { id: x.file.id, title: x.file.title, sliceCount: n, frames: x.file.frames || 1, url: x.url, urlFor: i => (n > 1 ? x.url + (x.url.includes('?') ? '&' : '?') + 'slice=' + i : x.url) };
-      });
-      pro.mount(stage, { t, mode: viewerMode, series, index: Math.max(0, series.findIndex(x => x.id === f.id)) })
-        .catch(e => { console.error(e); window.NoorViewer.mount(stage, { url, kind: f.kind, t, sliceCount: f.sliceCount || 1 }); });
+      const self = list.find(x => x.file.id === f.id) || { file: f, url };
+      const ordered = [self, ...list.filter(x => x.file.id !== f.id)];
+      const sep = u => (u.includes('?') ? '&' : '?');
+      // سلاسل الدراسة الحالية أولاً (تظهر في الشريط)، ثم سلاسل دراسات المريض الأخرى للمقارنة
+      const seriesOf = x => (x.file.series || [{ idx: 0, count: 1, frames: 1, description: '', modality: '' }]).map(sr => ({
+        id: x.file.id + ':' + sr.idx, studyId: x.file.id,
+        title: sr.description || [sr.modality, sr.number != null ? '#' + sr.number : ''].filter(Boolean).join(' ') || x.file.title,
+        modality: sr.modality, sliceCount: sr.count || 1, frames: sr.frames || 1,
+        group: x.file.title + (x.file.examDate ? ' — ' + fmtDate(x.file.examDate) : ''),
+        urlFor: i => x.url + sep(x.url) + 'series=' + sr.idx + '&slice=' + i,
+      }));
+      const own = seriesOf(self);
+      const series = [...own, ...ordered.slice(1).flatMap(seriesOf)];
+      // نبدأ بالسلسلة الرئيسية (الأكثر صوراً) بدل الصورة الاستكشافية
+      const main = own.reduce((best, sr, i) => (Math.max(sr.sliceCount, sr.frames) > Math.max(own[best].sliceCount, own[best].frames) ? i : best), 0);
+      const basic = () => window.NoorViewer.mount(stage, { url: own[main].urlFor(0).replace(/&slice=0$/, ''), kind: f.kind, t, sliceCount: own[main].sliceCount });
+      if (!pro) return basic();
+      pro.mount(stage, { t, mode: viewerMode, series, index: main, stripCount: own.length })
+        .catch(e => { console.error(e); basic(); });
     });
   } else {
     window.NoorViewer.mount(stage, { url, kind: f.kind, t, sliceCount: f.sliceCount || 1 });

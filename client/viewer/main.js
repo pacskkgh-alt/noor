@@ -2,7 +2,7 @@
  * يُحمَّل عند الحاجة فقط (import ديناميكي) ويعرض نفسه على window.NoorProViewer */
 import {
   init as csInit, RenderingEngine, Enums, imageLoader, volumeLoader, setVolumesForViewports, cache, metaData,
-  cornerstoneStreamingImageVolumeLoader,
+  cornerstoneStreamingImageVolumeLoader, utilities as csUtils,
 } from '@cornerstonejs/core';
 import { init as dicomImageLoaderInit } from '@cornerstonejs/dicom-image-loader';
 import * as csTools from '@cornerstonejs/tools';
@@ -120,8 +120,10 @@ export async function mount(stage, opts) {
 
 // ============================================================
 class ProViewer {
-  constructor(stage, { t, mode = 'full', series = [], index = 0 }) {
+  constructor(stage, { t, mode = 'full', series = [], index = 0, stripCount }) {
     this.stage = stage; this.t = t; this.series = series;
+    // عدد سلاسل الدراسة الحالية (تظهر في الشريط)؛ ما بعدها سلاسل دراسات أخرى للمقارنة
+    this.stripCount = Math.min(series.length, stripCount ?? series.length);
     this.advanced = mode === 'full';
     this.simpleMode = mode !== 'full';
     this.uid = 'pv' + (++seq) + Date.now().toString(36);
@@ -198,13 +200,17 @@ class ProViewer {
             ${this.simpleMode ? `<button class="pv-advtoggle" data-act="advanced">${ic('more')}<span>${esc(t('viewer.advanced'))}</span></button>` : ''}
           </div>
         </div>
-        <div class="pv-grid"></div>
+        <div class="pv-body">
+          ${this.stripCount > 1 ? this.stripHtml() : ''}
+          <div class="pv-grid"></div>
+        </div>
         <div class="pv-toast" hidden></div>
       </div>`;
     this.root = this.stage.querySelector('.pv');
     this.grid = this.root.querySelector('.pv-grid');
     this.toastEl = this.root.querySelector('.pv-toast');
     this.root.querySelector('.pv-bar').addEventListener('click', e => this.onBar(e));
+    this.setupStrip();
     this.root.querySelector('.pv-preset').addEventListener('change', e => { this.applyPreset(e.target.value); e.target.value = ''; });
     this.root.querySelector('.pv-fps').addEventListener('change', e => { this.fps = +e.target.value; if (this.playing) { this.stopCine(); this.startCine(); } });
     this.on(this.root, 'keydown', e => this.onKey(e));
@@ -213,6 +219,78 @@ class ProViewer {
     this.ro.observe(this.grid);
     this.root.focus({ preventScroll: true });
     await this.buildStacks();
+  }
+
+  // ---------- شريط سلاسل الدراسة ----------
+  stripHtml() {
+    const t = this.t;
+    const items = this.series.slice(0, this.stripCount).map((s, k) => `
+      <button class="pv-thumb" data-series="${k}" draggable="true" title="${esc(s.title)}">
+        <span class="pv-thumb-img"><canvas width="112" height="112"></canvas><em>${esc(s.modality || '')}</em></span>
+        <b>${esc(s.title)}</b>
+        <small>${esc(t('viewer.images', { n: this.count(s) }))}</small>
+      </button>`).join('');
+    return `<aside class="pv-strip" aria-label="${esc(t('viewer.seriesList'))}">
+      <div class="pv-strip-head">${esc(t('viewer.seriesList'))} <span>${this.stripCount}</span></div>
+      <div class="pv-thumbs">${items}</div>
+      <div class="pv-strip-hint pv-adv-only">${esc(t('viewer.dragHint'))}</div>
+    </aside>`;
+  }
+
+  setupStrip() {
+    const strip = this.root.querySelector('.pv-strip');
+    if (!strip) return;
+    strip.addEventListener('click', e => {
+      const b = e.target.closest('[data-series]'); if (!b) return;
+      this.pickSeries(+b.dataset.series);
+    });
+    strip.addEventListener('dragstart', e => {
+      const b = e.target.closest('[data-series]'); if (!b) return;
+      e.dataTransfer.setData('text/noor-series', b.dataset.series);
+      e.dataTransfer.effectAllowed = 'copy';
+    });
+    this.grid.addEventListener('dragover', e => {
+      if (!e.dataTransfer.types.includes('text/noor-series')) return;
+      e.preventDefault();
+      this.grid.querySelectorAll('.pv-pane').forEach(p => p.classList.toggle('pv-drop', p.contains(e.target)));
+    });
+    this.grid.addEventListener('dragleave', e => { if (!this.grid.contains(e.relatedTarget)) this.grid.querySelectorAll('.pv-drop').forEach(p => p.classList.remove('pv-drop')); });
+    this.grid.addEventListener('drop', e => {
+      const k = e.dataTransfer.getData('text/noor-series');
+      this.grid.querySelectorAll('.pv-drop').forEach(p => p.classList.remove('pv-drop'));
+      if (k === '') return;
+      e.preventDefault();
+      const pane = e.target.closest('[data-pane]');
+      if (this.mpr || !pane) return this.pickSeries(+k);
+      this.setActivePane(+pane.dataset.pane);
+      this.changeSeries(+pane.dataset.pane, +k);
+    });
+    this.loadThumbs();
+  }
+
+  // صورة مصغّرة حقيقية لكل سلسلة (من منتصفها)، واحدة تلو الأخرى حتى لا تبطئ العرض
+  async loadThumbs() {
+    for (let k = 0; k < this.stripCount; k++) {
+      if (this.destroyed) return;
+      const s = this.series[k];
+      const canvas = this.root.querySelector(`.pv-thumb[data-series="${k}"] canvas`);
+      if (!canvas) continue;
+      const ids = this.imageIdsFor(s);
+      try {
+        await csUtils.loadImageToCanvas({ canvas, imageId: ids[Math.floor(ids.length / 2)], thumbnail: true, useCPURendering: true });
+        canvas.parentElement.classList.add('ready');
+      } catch (e) { console.warn('thumbnail failed', e); }
+    }
+  }
+
+  async pickSeries(k) {
+    if (this.mpr) {
+      this.panes[this.activePane || 0].seriesIndex = k;
+      if ((this.series[k]?.sliceCount || 1) >= 10) { this.mpr = false; await this.buildMpr(); }
+      else { this.layout = 1; this.activePane = 0; this.panes[0].seriesIndex = k; await this.buildStacks(); }
+      return;
+    }
+    await this.changeSeries(this.activePane || 0, k);
   }
 
   btn(kind, key, label, shortcut) {
@@ -294,7 +372,7 @@ class ProViewer {
     return `
       <div class="pv-pane ${i === 0 ? 'active' : ''}" data-pane="${i}">
         <div class="pv-vp" oncontextmenu="return false"></div>
-        ${multi ? `<select class="pv-series" data-pane="${i}">${this.series.map((s, k) => `<option value="${k}" ${k === p.seriesIndex ? 'selected' : ''}>${esc(s.title)}${this.count(s) > 1 ? ` (${this.count(s)})` : ''}</option>`).join('')}</select>` : ''}
+        ${multi ? `<select class="pv-series" data-pane="${i}">${this.seriesOptions(p.seriesIndex)}</select>` : ''}
         <div class="pv-ov pv-tl"></div><div class="pv-ov pv-tr"></div><div class="pv-ov pv-bl"></div><div class="pv-ov pv-br"></div>
         <div class="pv-loading"><span class="pv-spin"></span></div>
         <div class="pv-err" hidden></div>
@@ -302,6 +380,18 @@ class ProViewer {
   }
 
   vpId(i) { return `${this.uid}-vp${i}`; }
+
+  seriesOptions(selected) {
+    const groups = [];
+    this.series.forEach((s, k) => {
+      const g = s.group || '';
+      let grp = groups.find(x => x.g === g);
+      if (!grp) groups.push(grp = { g, items: [] });
+      grp.items.push(`<option value="${k}" ${k === selected ? 'selected' : ''}>${esc(s.title)}${this.count(s) > 1 ? ` (${this.count(s)})` : ''}</option>`);
+    });
+    if (groups.length < 2) return groups.map(x => x.items.join('')).join('');
+    return groups.map(x => `<optgroup label="${esc(x.g)}">${x.items.join('')}</optgroup>`).join('');
+  }
 
   async loadPane(i) {
     const pane = this.grid.querySelector(`[data-pane="${i}"]`);
@@ -345,6 +435,8 @@ class ProViewer {
 
   async changeSeries(i, seriesIndex) {
     this.panes[i].seriesIndex = seriesIndex;
+    const sel = this.grid.querySelector(`.pv-series[data-pane="${i}"]`);
+    if (sel) sel.value = String(seriesIndex);
     this.stopCine();
     await this.loadPane(i);
     this.updateButtons();
@@ -616,6 +708,13 @@ class ProViewer {
 
   updateButtons() {
     if (!this.root) return;
+    const shown = new Set(this.mpr ? [this.panes[this.activePane || 0]?.seriesIndex] : this.panes.slice(0, this.layout).map(p => p.seriesIndex));
+    const act = this.panes[this.activePane || 0]?.seriesIndex;
+    this.root.querySelectorAll('.pv-thumb').forEach(b => {
+      const k = +b.dataset.series;
+      b.classList.toggle('shown', shown.has(k));
+      b.classList.toggle('active', k === act);
+    });
     const set = (sel, on) => { const b = this.root.querySelector(sel); if (b) b.classList.toggle('on', !!on); };
     set('[data-layout="l1"]', !this.mpr && this.layout === 1);
     set('[data-layout="l2"]', !this.mpr && this.layout === 2);
