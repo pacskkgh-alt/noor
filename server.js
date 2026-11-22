@@ -823,6 +823,14 @@ app.use((err, req, res, next) => {
 store.ensureSeed(hashPassword);
 // تحويل الأشعة المحفوظة بالشكل القديم (بطاقة لكل سلسلة) إلى دراسات
 if (studies.migrate(db, n => media.readDicomMeta(storedPath(n)))) { save(); console.log('تم تجميع الأشعة السابقة في دراسات.'); }
+{
+  const moved = studies.repairMisdetected(db, {
+    isDicom: n => media.hasDicomMagic(storedPath(n)) || media.looksLikeRawDicom(storedPath(n)),
+    readMeta: n => media.readDicomMeta(storedPath(n)),
+    unlink: n => unlinkQuiet(storedPath(n)),
+  });
+  if (moved) { save(); console.log(`تم نقل ${moved} صورة أشعة كانت مسجّلة كملفات عادية إلى دراساتها.`); }
+}
 // إكمال ضغط الفيديوهات التي توقفت بسبب إعادة تشغيل الخادم
 db.files.filter(f => f.processing).forEach(f => enqueueVideo(f.id));
 app.listen(PORT, () => console.log(`✨ منصة نور تعمل على http://localhost:${PORT}`));

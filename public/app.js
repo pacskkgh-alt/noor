@@ -771,18 +771,23 @@ const UP_EXT = {
 async function detectClientKind(file) {
   const name = file.name || '';
   if (name.toUpperCase() === 'DICOMDIR') return 'ignore';
-  const dot = name.lastIndexOf('.');
-  const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
-  if (UP_EXT[ext]) return UP_EXT[ext];
+  // المحتوى أولاً: بعض الأقراص تسمّي صور الأشعة بامتدادات مضللة (مثل HELPRU.PDF)
   if (file.size > 132) {
     try { if (await file.slice(128, 132).text() === 'DICM') return 'dicom'; } catch {}
-    // ملفات أقراص قديمة بلا ترويسة: تبدأ مباشرة بالمجموعة 0008
-    try {
-      const b = new DataView(await file.slice(0, 4).arrayBuffer());
-      if (b.getUint16(0, true) === 0x0008 && b.getUint16(2, true) < 0x0100) return 'dicom';
-    } catch {}
   }
-  return null;
+  let rawDicom = false;
+  try {
+    const b = new DataView(await file.slice(0, 4).arrayBuffer());
+    rawDicom = file.size > 132 && b.getUint16(0, true) === 0x0008 && b.getUint16(2, true) < 0x0100;
+  } catch {}
+  const dot = name.lastIndexOf('.');
+  const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+  if (ext === 'pdf') {
+    try { if (await file.slice(0, 4).text() === '%PDF') return 'pdf'; } catch {}
+    return rawDicom ? 'dicom' : null;
+  }
+  if (UP_EXT[ext]) return UP_EXT[ext];
+  return rawDicom ? 'dicom' : null;
 }
 
 // قراءة مجلد مسحوب إلى منطقة الإفلات (مع المجلدات الفرعية)
