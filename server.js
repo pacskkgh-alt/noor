@@ -18,6 +18,12 @@ const SESSION_DAYS = 7;
 
 app.set('trust proxy', true);
 app.use(express.json({ limit: '1mb' }));
+app.use((req, res, next) => {
+  if (MAINTENANCE && req.method === 'POST' && /^\/api\/(auth\/register|files$|shares$)/.test(req.path)) {
+    return res.status(503).json({ error: 'maintenance' });
+  }
+  next();
+});
 
 // ---------- أدوات مساعدة ----------
 function hashPassword(pw) {
@@ -104,6 +110,13 @@ function removeFileFromDisk(file) {
   for (const n of studies.storedNamesOf(file)) { try { fs.unlinkSync(storedPath(n)); } catch {} }
 }
 function unlinkQuiet(p) { try { fs.unlinkSync(p); } catch {} }
+// الحذف بقرار الأدمن: ما يحذفه المستخدم يُخفى فقط (سلة المحذوفات) ولا يُمسح إلا بقرار الأدمن
+const live = f => f && !f.deletedAt;
+const liveFile = id => { const f = db.files.find(x => x.id === id); return live(f) ? f : null; };
+
+// قفل الأمان: على Render بدون قرص دائم لا نقبل بيانات جديدة (ستُمسح مع أول تحديث)
+const MAINTENANCE = !!process.env.RENDER && !store.PERSISTENT && process.env.NOOR_ALLOW_TEMP !== '1';
+if (MAINTENANCE) console.warn('🔒 وضع الصيانة: التسجيل والرفع والمشاركة متوقفة حتى يُربط القرص الدائم.');
 
 // ---------- طابور ضغط الفيديو (ملف واحد في كل مرة) ----------
 const videoQueue = [];
@@ -200,8 +213,10 @@ app.post('/api/auth/register', upload.single('license'), (req, res) => {
   }
   if (password.length < 8) { cleanup(); return res.status(400).json({ error: 'weak_password' }); }
   const em = String(email).trim().toLowerCase();
-  if (db.users.some(u => u.email === em)) { cleanup(); return res.status(409).json({ error: 'email_taken' }); }
   const ph = otp.normalizePhone(phone);
+  // الإيميل والجوال يبقيان محجوزين لحساب محذوف (يستطيع الأدمن استرجاعه بملفاته)
+  if (db.users.some(u => u.status === 'deleted' && (u.email === em || (ph && u.phone === ph)))) { cleanup(); return res.status(409).json({ error: 'account_deleted' }); }
+  if (db.users.some(u => u.email === em)) { cleanup(); return res.status(409).json({ error: 'email_taken' }); }
   if (!ph) { cleanup(); return res.status(400).json({ error: 'invalid_phone' }); }
   if (phoneTaken(ph)) { cleanup(); return res.status(409).json({ error: 'phone_taken' }); }
   const user = {
@@ -233,6 +248,7 @@ function handleLogin(adminOnly) {
       save();
       return res.status(401).json({ error: 'invalid_credentials' });
     }
+    if (u.status === 'deleted') return res.status(403).json({ error: 'account_deleted' });
     if (u.status !== 'active') return res.status(403).json({ error: 'account_suspended' });
     if (needsOtp(u)) {
       // حساب قديم بلا رقم موثّق: يضيف رقمه أولاً
@@ -351,7 +367,7 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/auth/me', (req, res) => res.json({ user: publicUser(req.user), otpDevMode: otp.DEV_MODE }));
+app.get('/api/auth/me', (req, res) => res.json({ user: publicUser(req.user), otpDevMode: otp.DEV_MODE, maintenance: MAINTENANCE }));
 
 app.patch('/api/auth/me', auth(), (req, res) => {
   const { name, currentPassword, newPassword } = req.body || {};
@@ -368,7 +384,7 @@ app.patch('/api/auth/me', auth(), (req, res) => {
 
 // ================= ملفات المريض =================
 function canAccessFile(user, file) {
-  if (!user || !file) return false;
+  if (!user || !live(file)) return false;
   if (file.ownerId === user.id) return true;
   if (user.role === 'doctor' && user.doctor?.verification === 'approved') {
     return db.shares.some(s => s.doctorId === user.id && shareActive(s) && s.fileIds.includes(file.id));
@@ -382,7 +398,7 @@ function fileWithExtras(f) {
 }
 
 app.get('/api/files', auth('patient'), (req, res) => {
-  res.json({ files: db.files.filter(f => f.ownerId === req.user.id).map(fileWithExtras) });
+  res.json({ files: db.files.filter(f => f.ownerId === req.user.id && live(f)).map(fileWithExtras) });
 });
 
 // الرفع: الملفات العادية بطاقة لكل ملف، وصور الأشعة تُجمع حسب الدراسة (وتُدمج مع الدراسة نفسها إن رُفعت سابقاً)
@@ -447,7 +463,7 @@ app.post('/api/files', auth('patient'), upload.fields([{ name: 'files', maxCount
 
     // تقارير PDF من القرص: تُرفق بالدراسة (أو تُرفع كملف عادي إن لم توجد دراسة)
     const target = touched.slice().sort((a, b) => b.size - a.size)[0]
-      || (req.body.studyId && db.files.find(x => x.id === req.body.studyId && x.ownerId === req.user.id && x.kind === 'dicom'));
+      || (req.body.studyId && db.files.find(x => x.id === req.body.studyId && x.ownerId === req.user.id && x.kind === 'dicom' && live(x)));
     for (const f of attachFiles) {
       if (media.detectKind(f.path, f.originalname) !== 'pdf') { unlinkQuiet(f.path); continue; }
       if (target) {
@@ -470,7 +486,7 @@ app.post('/api/files', auth('patient'), upload.fields([{ name: 'files', maxCount
 });
 
 app.patch('/api/files/:id', auth('patient'), (req, res) => {
-  const f = db.files.find(x => x.id === req.params.id && x.ownerId === req.user.id);
+  const f = db.files.find(x => x.id === req.params.id && x.ownerId === req.user.id && live(x));
   if (!f) return res.status(404).json({ error: 'not_found' });
   for (const k of ['title', 'category', 'examDate', 'center', 'notes']) {
     if (req.body[k] !== undefined) f[k] = String(req.body[k]);
@@ -480,13 +496,12 @@ app.patch('/api/files/:id', auth('patient'), (req, res) => {
 });
 
 app.delete('/api/files/:id', auth('patient'), (req, res) => {
-  const i = db.files.findIndex(x => x.id === req.params.id && x.ownerId === req.user.id);
-  if (i < 0) return res.status(404).json({ error: 'not_found' });
-  const [f] = db.files.splice(i, 1);
-  removeFileFromDisk(f);
-  db.notes = db.notes.filter(n => n.fileId !== f.id);
+  const f = db.files.find(x => x.id === req.params.id && x.ownerId === req.user.id && live(x));
+  if (!f) return res.status(404).json({ error: 'not_found' });
+  // يختفي من حساب المريض ومن روابط المشاركة، ويبقى محفوظاً في سلة المحذوفات (مع ملاحظات الأطباء)
+  f.deletedAt = new Date().toISOString(); f.deletedBy = req.user.id;
   db.shares.forEach(s => { s.fileIds = s.fileIds.filter(id => id !== f.id); });
-  log(req, req.user.id, 'file_deleted', { title: f.title });
+  log(req, req.user.id, 'file_deleted', { fileId: f.id, title: f.title });
   save();
   res.json({ ok: true });
 });
@@ -535,7 +550,7 @@ app.get('/api/centers', auth(), (req, res) => res.json({ centers: db.centers }))
 
 // ================= المشاركة =================
 function shareView(s) {
-  const files = s.fileIds.map(id => db.files.find(f => f.id === id)).filter(Boolean);
+  const files = s.fileIds.map(liveFile).filter(Boolean);
   return {
     ...s, pin: s.pin,
     files: files.map(f => ({ id: f.id, title: f.title, kind: f.kind, category: f.category })),
@@ -614,7 +629,7 @@ app.get('/api/s/:token', (req, res) => {
   if (!s) return res.status(404).json({ error: 'not_found' });
   const owner = db.users.find(u => u.id === s.ownerId);
   const status = s.revoked ? 'revoked' : !shareActive(s) ? 'expired' : s.failedAttempts >= 5 ? 'locked' : 'ok';
-  res.json({ status, patientName: owner?.name || '', recipientName: s.recipientName, expiresAt: s.expiresAt, filesCount: s.fileIds.length, message: s.message });
+  res.json({ status, patientName: owner?.name || '', recipientName: s.recipientName, expiresAt: s.expiresAt, filesCount: s.fileIds.filter(liveFile).length, message: s.message });
 });
 
 app.post('/api/s/:token/unlock', (req, res) => {
@@ -632,7 +647,7 @@ app.post('/api/s/:token/unlock', (req, res) => {
   log(req, null, 'share_opened', { shareId: s.id, ownerId: s.ownerId, recipient: s.recipientName });
   save();
   const owner = db.users.find(u => u.id === s.ownerId);
-  const files = s.fileIds.map(id => db.files.find(f => f.id === id)).filter(Boolean)
+  const files = s.fileIds.map(liveFile).filter(Boolean)
     .map(f => ({ id: f.id, title: f.title, kind: f.kind, category: f.category, examDate: f.examDate, center: f.center, size: f.size, originalName: f.originalName,
       ...(f.kind === 'dicom' && f.series ? studies.publicStudy(f) : {}) }));
   res.json({ key: shareKey(s), patientName: owner?.name, files, expiresAt: s.expiresAt });
@@ -643,7 +658,7 @@ app.get('/api/s/:token/files/:fid', (req, res) => {
   if (!s || !shareActive(s) || req.query.k !== shareKey(s) || !s.fileIds.includes(req.params.fid)) {
     return res.status(404).json({ error: 'not_found' });
   }
-  const f = db.files.find(x => x.id === req.params.fid);
+  const f = liveFile(req.params.fid);
   if (!f) return res.status(404).json({ error: 'not_found' });
   const firstRequest = (!req.headers.range || req.headers.range.startsWith('bytes=0-'))
     && (req.query.download === '1' || shouldLogView(s.id + ':' + f.id + ':' + (req.query.attachment || '')));
@@ -659,7 +674,7 @@ app.get('/api/doctor/inbox', auth('doctor'), (req, res) => {
   if (req.user.doctor?.verification !== 'approved') return res.json({ shares: [], pending: true, status: req.user.doctor?.verification });
   const shares = db.shares.filter(s => s.doctorId === req.user.id && shareActive(s)).map(s => {
     const owner = db.users.find(u => u.id === s.ownerId);
-    const files = s.fileIds.map(id => db.files.find(f => f.id === id)).filter(Boolean)
+    const files = s.fileIds.map(liveFile).filter(Boolean)
       .map(f => ({ ...fileWithExtras(f), myNotes: db.notes.filter(n => n.fileId === f.id && n.doctorId === req.user.id).length }));
     return { id: s.id, patientName: owner?.name || '—', patientEmail: owner?.email, message: s.message, createdAt: s.createdAt, expiresAt: s.expiresAt, files };
   });
@@ -677,25 +692,30 @@ function diskInfo() {
 }
 
 app.get('/api/admin/stats', admin, (req, res) => {
-  const byRole = r => db.users.filter(u => u.role === r).length;
+  const users = db.users.filter(u => u.status !== 'deleted');
+  const files = db.files.filter(live);
+  const trashed = db.files.filter(f => !live(f));
+  const byRole = r => users.filter(u => u.role === r).length;
   const byCat = {};
-  db.files.forEach(f => { byCat[f.category] = (byCat[f.category] || 0) + 1; });
+  files.forEach(f => { byCat[f.category] = (byCat[f.category] || 0) + 1; });
   const byKind = {};
-  db.files.forEach(f => { byKind[f.kind] = (byKind[f.kind] || 0) + 1; });
+  files.forEach(f => { byKind[f.kind] = (byKind[f.kind] || 0) + 1; });
   const days = [];
   for (let i = 13; i >= 0; i--) {
     const d = new Date(Date.now() - i * 864e5).toISOString().slice(0, 10);
     days.push({
       date: d,
-      uploads: db.files.filter(f => f.createdAt.slice(0, 10) === d).length,
+      uploads: files.filter(f => f.createdAt.slice(0, 10) === d).length,
       shares: db.shares.filter(s => s.createdAt.slice(0, 10) === d).length,
     });
   }
   res.json({
-    users: db.users.length, patients: byRole('patient'), doctors: byRole('doctor'),
-    pendingDoctors: db.users.filter(u => u.role === 'doctor' && u.doctor?.verification === 'pending').length,
-    suspended: db.users.filter(u => u.status !== 'active').length,
-    files: db.files.length, storage: db.files.reduce((a, f) => a + (f.size || 0), 0),
+    users: users.length, patients: byRole('patient'), doctors: byRole('doctor'),
+    pendingDoctors: users.filter(u => u.role === 'doctor' && u.doctor?.verification === 'pending').length,
+    suspended: users.filter(u => u.status !== 'active').length,
+    files: files.length, storage: files.reduce((a, f) => a + (f.size || 0), 0),
+    trash: { files: trashed.length, users: db.users.length - users.length, size: trashed.reduce((a, f) => a + (f.size || 0), 0) },
+    maintenance: MAINTENANCE,
     shares: db.shares.length, activeShares: db.shares.filter(shareActive).length,
     shareViews: db.shares.reduce((a, s) => a + (s.accessLog || []).length, 0),
     centers: db.centers.length, byCat, byKind, days,
@@ -705,17 +725,17 @@ app.get('/api/admin/stats', admin, (req, res) => {
 
 app.get('/api/admin/users', admin, (req, res) => {
   res.json({
-    users: db.users.map(u => ({
+    users: db.users.filter(u => u.status !== 'deleted').map(u => ({
       ...publicUser(u),
-      filesCount: db.files.filter(f => f.ownerId === u.id).length,
-      storage: db.files.filter(f => f.ownerId === u.id).reduce((a, f) => a + f.size, 0),
+      filesCount: db.files.filter(f => f.ownerId === u.id && live(f)).length,
+      storage: db.files.filter(f => f.ownerId === u.id && live(f)).reduce((a, f) => a + f.size, 0),
       sharesCount: db.shares.filter(s => s.ownerId === u.id).length,
     })),
   });
 });
 
 app.patch('/api/admin/users/:id', admin, (req, res) => {
-  const u = db.users.find(x => x.id === req.params.id);
+  const u = db.users.find(x => x.id === req.params.id && x.status !== 'deleted');
   if (!u) return res.status(404).json({ error: 'not_found' });
   if (u.id === req.user.id) return res.status(400).json({ error: 'self_action' });
   if (['active', 'suspended'].includes(req.body.status)) {
@@ -727,20 +747,97 @@ app.patch('/api/admin/users/:id', admin, (req, res) => {
   res.json({ user: publicUser(u) });
 });
 
+// حذف الحساب: يُعطَّل ويُخفى، وتبقى ملفاته محفوظة حتى يقرر الأدمن (سلة المحذوفات)
 app.delete('/api/admin/users/:id', admin, (req, res) => {
-  const u = db.users.find(x => x.id === req.params.id);
+  const u = db.users.find(x => x.id === req.params.id && x.status !== 'deleted');
   if (!u) return res.status(404).json({ error: 'not_found' });
   if (u.id === req.user.id) return res.status(400).json({ error: 'self_action' });
-  db.files.filter(f => f.ownerId === u.id).forEach(removeFileFromDisk);
-  const fileIds = new Set(db.files.filter(f => f.ownerId === u.id).map(f => f.id));
+  u.prevStatus = u.status; u.status = 'deleted';
+  u.deletedAt = new Date().toISOString(); u.deletedBy = req.user.id;
+  // روابط المشاركة التي أنشأها تتوقف فوراً
+  db.shares.forEach(s => { if (s.ownerId === u.id && !s.revoked) { s.revoked = true; s.revokedByDeletion = true; } });
+  for (const [k, s] of Object.entries(db.sessions)) if (s.userId === u.id) delete db.sessions[k];
+  log(req, req.user.id, 'user_deleted', { targetId: u.id, target: u.name, email: u.email });
+  save();
+  res.json({ ok: true });
+});
+
+// ---------- سلة المحذوفات ----------
+const nameOf = id => db.users.find(u => u.id === id)?.name || '—';
+app.get('/api/admin/trash', admin, (req, res) => {
+  const owners = Object.fromEntries(db.users.map(u => [u.id, u]));
+  const files = db.files.filter(f => !live(f)).map(f => ({
+    ...fileWithExtras(f),
+    ownerName: owners[f.ownerId]?.name || '—', ownerEmail: owners[f.ownerId]?.email || '',
+    ownerDeleted: owners[f.ownerId]?.status === 'deleted', deletedByName: nameOf(f.deletedBy),
+  }));
+  const users = db.users.filter(u => u.status === 'deleted').map(u => {
+    const own = db.files.filter(f => f.ownerId === u.id);
+    return { ...publicUser(u), filesCount: own.length, storage: own.reduce((a, f) => a + (f.size || 0), 0), deletedByName: nameOf(u.deletedBy) };
+  });
+  files.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
+  users.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
+  res.json({ files, users });
+});
+const trashedFile = req => db.files.find(f => f.id === req.params.id && !live(f));
+// الأدمن يعرض الملف المحذوف قبل أن يقرر
+app.get('/api/admin/trash/files/:id/content', admin, (req, res) => {
+  const f = trashedFile(req);
+  if (!f) return res.status(404).json({ error: 'not_found' });
+  sendStoredFile(req, res, f, req.query.download === '1');
+});
+app.post('/api/admin/trash/files/:id/restore', admin, (req, res) => {
+  const f = trashedFile(req);
+  if (!f) return res.status(404).json({ error: 'not_found' });
+  if (db.users.find(u => u.id === f.ownerId)?.status === 'deleted') return res.status(400).json({ error: 'owner_deleted' });
+  // نفس الدراسة رُفعت من جديد بعد الحذف؟ ندمج الصور فيها بدل بطاقتين
+  const twin = f.kind === 'dicom' && f.studyKey && db.files.find(x => x !== f && live(x) && x.ownerId === f.ownerId && x.studyKey === f.studyKey);
+  delete f.deletedAt; delete f.deletedBy;
+  if (twin) {
+    const before = [...studies.storedNamesOf(f), ...studies.storedNamesOf(twin)];
+    studies.migrate(db, () => null);
+    // الصور المكررة (نفس الصورة في النسختين) تُمسح لأنها لم تعد مستخدمة
+    const used = new Set(db.files.flatMap(x => studies.storedNamesOf(x)));
+    before.filter(n => !used.has(n)).forEach(n => unlinkQuiet(storedPath(n)));
+  }
+  log(req, req.user.id, 'file_restored', { fileId: f.id, title: f.title, ownerId: f.ownerId });
+  save();
+  res.json({ ok: true });
+});
+app.delete('/api/admin/trash/files/:id', admin, (req, res) => {
+  const f = trashedFile(req);
+  if (!f) return res.status(404).json({ error: 'not_found' });
+  removeFileFromDisk(f);
+  db.files = db.files.filter(x => x !== f);
+  db.notes = db.notes.filter(n => n.fileId !== f.id);
+  log(req, req.user.id, 'file_purged', { title: f.title, ownerId: f.ownerId });
+  save();
+  res.json({ ok: true });
+});
+const trashedUser = req => db.users.find(u => u.id === req.params.id && u.status === 'deleted');
+app.post('/api/admin/trash/users/:id/restore', admin, (req, res) => {
+  const u = trashedUser(req);
+  if (!u) return res.status(404).json({ error: 'not_found' });
+  u.status = u.prevStatus === 'suspended' ? 'suspended' : 'active';
+  delete u.prevStatus; delete u.deletedAt; delete u.deletedBy;
+  log(req, req.user.id, 'user_restored', { targetId: u.id, target: u.name });
+  save();
+  res.json({ ok: true });
+});
+// الحذف النهائي للحساب: يمسح الحساب وكل ملفاته من القرص (لا يمكن التراجع)
+app.delete('/api/admin/trash/users/:id', admin, (req, res) => {
+  const u = trashedUser(req);
+  if (!u) return res.status(404).json({ error: 'not_found' });
+  const own = db.files.filter(f => f.ownerId === u.id);
+  own.forEach(removeFileFromDisk);
+  const fileIds = new Set(own.map(f => f.id));
   db.files = db.files.filter(f => f.ownerId !== u.id);
   db.notes = db.notes.filter(n => !fileIds.has(n.fileId) && n.doctorId !== u.id);
   db.shares = db.shares.filter(s => s.ownerId !== u.id);
   db.shares.forEach(s => { if (s.doctorId === u.id) s.revoked = true; });
   if (u.doctor?.licenseFile) removeFileFromDisk(u.doctor.licenseFile);
   db.users = db.users.filter(x => x.id !== u.id);
-  for (const [k, s] of Object.entries(db.sessions)) if (s.userId === u.id) delete db.sessions[k];
-  log(req, req.user.id, 'user_deleted', { target: u.name, email: u.email });
+  log(req, req.user.id, 'user_purged', { target: u.name, email: u.email });
   save();
   res.json({ ok: true });
 });

@@ -173,6 +173,7 @@ function setLang(l) {
   document.documentElement.lang = l;
   document.documentElement.dir = l === 'ar' ? 'rtl' : 'ltr';
   document.title = l === 'ar' ? 'نور | منصة الفحوصات الطبية' : 'Noor | Medical Records';
+  document.dispatchEvent(new Event('noor:lang'));
   render();
 }
 const langBtn = () => `<button class="btn btn-ghost btn-sm lang-btn" data-lang>${icon('globe')}<span>${state.lang === 'ar' ? 'English' : 'العربية'}</span></button>`;
@@ -560,6 +561,7 @@ const NAV = {
     { path: '/users', view: 'admin/users', icon: 'users', key: 'nav.users' },
     { path: '/doctors', view: 'admin/doctors', icon: 'shield', key: 'nav.verify' },
     { path: '/centers', view: 'admin/centers', icon: 'hospital', key: 'nav.centers' },
+    { path: '/trash', view: 'admin/trash', icon: 'trash', key: 'nav.trash' },
     { path: '/activity', view: 'admin/activity', icon: 'activity', key: 'nav.activity' },
     { path: '/profile', view: 'profile', icon: 'user', key: 'nav.profile' },
   ],
@@ -574,7 +576,7 @@ function renderShell(item) {
       <a class="brand" href="${u.role === 'admin' ? '#/overview' : '#/'}">${logo(36)}<span><b>${t('brand')}</b><small>${t('role.' + u.role)}</small></span></a>
       <nav class="side-nav">
         ${NAV[u.role].map(n => `<a href="#${n.path}" class="${current === n.path ? 'active' : ''}" data-go="${n.path}">${icon(n.icon)}<span>${t(n.key)}</span>
-          ${n.path === '/doctors' ? '<em class="nav-badge" id="pending-badge" hidden></em>' : ''}</a>`).join('')}
+          ${n.path === '/doctors' ? '<em class="nav-badge" id="pending-badge" hidden></em>' : ''}${n.path === '/trash' ? '<em class="nav-badge muted-badge" id="trash-badge" hidden></em>' : ''}</a>`).join('')}
       </nav>
       <div class="side-foot">
         <div class="me"><span class="avatar">${esc(u.name.replace(/^د\.\s*/, '').trim()[0] || '?')}</span><div><b>${esc(u.name)}</b><small dir="ltr">${esc(u.email)}</small></div></div>
@@ -602,10 +604,13 @@ function renderShell(item) {
   const views = {
     'files': viewFiles, 'shares': viewShares, 'profile': viewProfile, 'inbox': viewInbox,
     'admin': viewAdminOverview, 'admin/users': viewAdminUsers, 'admin/doctors': viewAdminDoctors,
-    'admin/centers': viewAdminCenters, 'admin/activity': viewAdminActivity,
+    'admin/centers': viewAdminCenters, 'admin/activity': viewAdminActivity, 'admin/trash': viewAdminTrash,
   };
   $('#page-title').textContent = t(item.key);
-  if (u.role === 'admin') api('/api/admin/stats').then(s => { const b = $('#pending-badge'); if (b && s.pendingDoctors) { b.textContent = s.pendingDoctors; b.hidden = false; } }).catch(() => {});
+  if (u.role === 'admin') api('/api/admin/stats').then(s => {
+    const b = $('#pending-badge'); if (b && s.pendingDoctors) { b.textContent = s.pendingDoctors; b.hidden = false; }
+    const tb = $('#trash-badge'), n = s.trash ? s.trash.files + s.trash.users : 0; if (tb && n) { tb.textContent = n; tb.hidden = false; }
+  }).catch(() => {});
   const viewEl = $('#view');
   (views[page] || viewFiles)(viewEl).catch(e => {
     if (viewEl.isConnected) viewEl.innerHTML = `<div class="empty">${icon('alert')}<p>${esc(errMsg(e))}</p></div>`;
@@ -1492,6 +1497,7 @@ async function viewAdminOverview(el) {
   const catTotal = Math.max(1, Object.values(s.byCat).reduce((a, b) => a + b, 0));
   el.innerHTML = `
     ${pageHead(t('adm.overview'), t('adm.overviewSub'))}
+    ${s.maintenance ? `<div class="maint-card">${icon('alert')}<div><b>${t('mt.adminTitle')}</b><p>${t('mt.adminSub')}</p></div></div>` : ''}
     ${s.pendingDoctors ? `<button class="alert-banner" data-go="/doctors">${icon('shield')} ${t('adm.pendingAlert', { n: s.pendingDoctors })} <span>←</span></button>` : ''}
     <div class="stat-grid">
       ${[['users', s.users, 'adm.users', t('adm.usersSub', { p: s.patients, d: s.doctors })],
@@ -1503,6 +1509,7 @@ async function viewAdminOverview(el) {
         <div class="stat"><span class="stat-ic">${icon(ic)}</span><div><b>${v}</b><span>${t(k)}</span>${sub ? `<small>${sub}</small>` : ''}</div></div>`).join('')}
     </div>
     ${storageCard(s)}
+    ${s.trash && (s.trash.files || s.trash.users) ? `<button class="alert-banner subtle-banner" data-go="/trash">${icon('trash')} ${t('tr.stat', { f: s.trash.files, u: s.trash.users, size: fmtSize(s.trash.size) })} <span>←</span></button>` : ''}
     <div class="grid-2 cards-2">
       <div class="card">
         <div class="card-head"><h3>${t('adm.activity14')}</h3><div class="legend"><span><i class="lg-up"></i>${t('adm.uploads')}</span><span><i class="lg-sh"></i>${t('adm.sharesL')}</span></div></div>
@@ -1579,7 +1586,7 @@ async function viewAdminUsers(el) {
       }
       if (b.dataset.act === 'delete' && await confirmBox(t('adm.confirmDelete', { name: u.name }))) {
         await api('/api/admin/users/' + u.id, { method: 'DELETE' });
-        users.splice(users.indexOf(u), 1); draw(); toast(t('adm.deleted'));
+        users.splice(users.indexOf(u), 1); draw(); toast(t('adm.movedToTrash'));
       }
     } catch (ex) { toast(errMsg(ex), 'err'); }
   };
@@ -1736,6 +1743,112 @@ async function viewAdminActivity(el) {
   $('#act-f', el).onchange = e => { ui.action = e.target.value; draw(); };
 }
 
+
+// ============ سلة المحذوفات ============
+// تأكيد الحذف النهائي: يكتب الأدمن كلمة «حذف»
+function purgeConfirm(message) {
+  return new Promise(resolve => {
+    let done = false;
+    const word = t('tr.word');
+    const m = modal(`
+      <div class="modal-body confirm">
+        <div class="confirm-icon danger">${icon('alert')}</div>
+        <h3>${t('tr.purgeTitle')}</h3>
+        <p>${esc(message)}</p>
+        <label class="field"><span>${esc(t('tr.typeWord', { word }))}</span><input id="pg-word" autocomplete="off"></label>
+        <div class="row-end">
+          <button class="btn btn-ghost" data-close>${t('cancel')}</button>
+          <button class="btn btn-danger" id="pg-ok" disabled>${t('tr.purge')}</button>
+        </div>
+      </div>`, { onClose: () => { if (!done) resolve(false); } });
+    const inp = $('#pg-word', m), ok = $('#pg-ok', m);
+    inp.oninput = () => { ok.disabled = inp.value.trim().toLowerCase() !== word.toLowerCase(); };
+    inp.focus();
+    ok.onclick = () => { done = true; closeModal(); resolve(true); };
+  });
+}
+
+async function viewAdminTrash(el) {
+  const data = await api('/api/admin/trash');
+  const ui = { tab: 'files' };
+  const by = f => `<small class="muted">${t('tr.deletedBy')}: ${esc(f.deletedByName)} • ${fmtDate(f.deletedAt, true)}</small>`;
+  const draw = () => {
+    const files = data.files, users = data.users;
+    el.innerHTML = `
+      ${pageHead(t('nav.trash'), t('tr.sub'))}
+      <div class="chips" id="tr-tabs">
+        <button class="chip ${ui.tab === 'files' ? 'active' : ''}" data-tab="files">${icon('file')} ${t('tr.files')} (${files.length})</button>
+        <button class="chip ${ui.tab === 'users' ? 'active' : ''}" data-tab="users">${icon('users')} ${t('tr.users')} (${users.length})</button>
+      </div>
+      <div class="trash-list">
+      ${ui.tab === 'files'
+        ? (files.map(f => `
+          <article class="card trash-item" data-id="${f.id}">
+            <span class="file-ic c-${f.category}">${icon(kindIcon(f.kind))}</span>
+            <div class="trash-text">
+              <b>${esc(f.title)}</b>
+              <small>${t('cat.' + f.category)} • ${fmtSize(f.size)}${f.imageCount ? ' • ' + t('viewer.images', { n: f.imageCount }) : ''}</small>
+              <small>${t('tr.owner')}: <b>${esc(f.ownerName)}</b> <span dir="ltr">${esc(f.ownerEmail)}</span>${f.ownerDeleted ? ` <span class="status sm st-off">${t('tr.ownerDeleted')}</span>` : ''}</small>
+              ${by(f)}
+            </div>
+            <div class="row-gap trash-actions">
+              <button class="btn btn-ghost btn-sm" data-act="view">${icon('eye')} <span class="hide-sm">${t('view')}</span></button>
+              <button class="btn btn-ghost btn-sm" data-act="restore" ${f.ownerDeleted ? 'disabled title="' + t('err.owner_deleted') + '"' : ''}>${icon('refresh')} ${t('tr.restore')}</button>
+              <button class="btn btn-danger-soft btn-sm" data-act="purge">${icon('trash')} <span class="hide-sm">${t('tr.purge')}</span></button>
+            </div>
+          </article>`).join('') || `<div class="empty">${icon('trash')}<p>${t('tr.empty')}</p></div>`)
+        : (users.map(u => `
+          <article class="card trash-item" data-uid="${u.id}">
+            <span class="avatar">${esc(u.name.replace(/^د\.\s*/, '').trim()[0] || '?')}</span>
+            <div class="trash-text">
+              <div class="trash-name"><b>${esc(u.name)}</b> <span class="badge role-${u.role}">${t('role.' + u.role)}</span></div>
+              <small dir="ltr" class="ltr-line">${esc(u.email)}${u.phone ? ' • ' + esc(u.phone) : ''}</small>
+              <small>${t('tr.filesN', { n: u.filesCount })} • ${fmtSize(u.storage)}</small>
+              ${by(u)}
+            </div>
+            <div class="row-gap trash-actions">
+              <button class="btn btn-ghost btn-sm" data-act="restore-user">${icon('refresh')} ${t('tr.restore')}</button>
+              <button class="btn btn-danger-soft btn-sm" data-act="purge-user">${icon('trash')} <span class="hide-sm">${t('tr.purge')}</span></button>
+            </div>
+          </article>`).join('') || `<div class="empty">${icon('users')}<p>${t('tr.emptyUsers')}</p></div>`)}
+      </div>`;
+  };
+  draw();
+  const reload = async () => { Object.assign(data, await api('/api/admin/trash')); draw(); };
+  el.onclick = async e => {
+    const tab = e.target.closest('[data-tab]');
+    if (tab) { ui.tab = tab.dataset.tab; return draw(); }
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    const row = b.closest('.trash-item');
+    const f = data.files.find(x => x.id === row.dataset.id);
+    const u = data.users.find(x => x.id === row.dataset.uid);
+    try {
+      if (b.dataset.act === 'view') {
+        const url = '/api/admin/trash/files/' + f.id + '/content';
+        return openFileViewer(f, { url, canDownload: true, viewerMode: 'full' });
+      }
+      if (b.dataset.act === 'restore') {
+        if (!await confirmBox(t('tr.confirmRestore', { title: f.title, name: f.ownerName }), { danger: false, okText: t('tr.restore') })) return;
+        await api('/api/admin/trash/files/' + f.id + '/restore', { method: 'POST' });
+      }
+      if (b.dataset.act === 'purge') {
+        if (!await purgeConfirm(t('tr.purgeFile', { title: f.title }))) return;
+        await api('/api/admin/trash/files/' + f.id, { method: 'DELETE' });
+      }
+      if (b.dataset.act === 'restore-user') {
+        if (!await confirmBox(t('tr.confirmRestoreUser', { name: u.name }), { danger: false, okText: t('tr.restore') })) return;
+        await api('/api/admin/trash/users/' + u.id + '/restore', { method: 'POST' });
+      }
+      if (b.dataset.act === 'purge-user') {
+        if (!await purgeConfirm(t('tr.purgeUser', { name: u.name, n: u.filesCount }))) return;
+        await api('/api/admin/trash/users/' + u.id, { method: 'DELETE' });
+      }
+      toast(t(b.dataset.act.startsWith('purge') ? 'tr.purged' : 'tr.restored'));
+      await reload();
+    } catch (ex) { toast(errMsg(ex), 'err'); }
+  };
+}
+
 // ============ صفحة المشاركة العامة ============
 async function renderSharePage(token) {
   const app = $('#app');
@@ -1810,7 +1923,18 @@ async function renderSharePage(token) {
 
 // ============ البدء ============
 (async () => {
-  try { state.user = (await api('/api/auth/me')).user; } catch {}
+  try {
+    const me = await api('/api/auth/me');
+    state.user = me.user;
+    // قفل الأمان: شريط ظاهر للجميع عندما تكون المنصة في وضع الصيانة
+    if (me.maintenance) {
+      const bar = document.createElement('div');
+      bar.className = 'maint-bar'; bar.id = 'maint-bar';
+      document.body.prepend(bar);
+      const paint = () => { bar.innerHTML = `${icon('alert')} <span>${esc(t('mt.banner'))}</span>`; };
+      paint(); document.addEventListener('noor:lang', paint);
+    }
+  } catch {}
   setLang(state.lang);
 })();
 

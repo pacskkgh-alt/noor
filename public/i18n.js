@@ -52,7 +52,7 @@ ar: {
   'files.count': 'ملف', 'files.storage': 'المساحة', 'files.doctorNotes': 'ملاحظات أطباء',
   'files.search': 'ابحث باسم الفحص أو المركز…', 'files.emptyTitle': 'لا توجد ملفات بعد', 'files.emptySub': 'ابدأ برفع أول فحص طبي لك',
   'files.noResults': 'لا توجد نتائج', 'files.notesFrom': '{n} ملاحظة من الطبيب', 'files.selected': 'تم تحديد {n}',
-  'files.shareSelected': 'مشاركة المحدد', 'files.confirmDelete': 'هل تريد حذف «{title}» نهائياً؟ سيُزال أيضاً من كل المشاركات.',
+  'files.shareSelected': 'مشاركة المحدد', 'files.confirmDelete': 'هل تريد حذف «{title}»؟ سيُزال من حسابك ومن كل المشاركات.',
   'files.deleted': 'تم حذف الملف',
 
   'up.title': 'رفع فحص طبي', 'up.drop': 'اسحب الملفات هنا أو اضغط للاختيار',
@@ -111,7 +111,7 @@ ar: {
   'adm.activity14': 'النشاط خلال 14 يوماً', 'adm.uploads': 'رفع', 'adm.sharesL': 'مشاركة', 'adm.byCat': 'الملفات حسب التصنيف', 'adm.byKind': 'حسب النوع',
   'adm.usersPageSub': '{n} مستخدم مسجّل', 'adm.searchUsers': 'ابحث بالاسم أو البريد', 'adm.role': 'النوع', 'adm.status': 'الحالة',
   'adm.joined': 'تاريخ التسجيل', 'adm.you': 'أنت', 'adm.suspend': 'إيقاف', 'adm.activate': 'تفعيل',
-  'adm.confirmSuspend': 'إيقاف حساب {name}؟ لن يتمكن من تسجيل الدخول.', 'adm.confirmDelete': 'حذف حساب {name} وكل ملفاته ومشاركاته نهائياً؟',
+  'adm.confirmSuspend': 'إيقاف حساب {name}؟ لن يتمكن من تسجيل الدخول.', 'adm.confirmDelete': 'حذف حساب {name}؟ لن يتمكن من الدخول وتتوقف روابط مشاركته، وتبقى ملفاته محفوظة في سلة المحذوفات.',
   'adm.deleted': 'تم الحذف', 'adm.verifySub': 'راجع رخص الأطباء قبل تفعيل استقبالهم للفحوصات',
   'adm.viewLicense': 'عرض الرخصة', 'adm.licenseOf': 'رخصة {name}', 'adm.approve': 'توثيق', 'adm.reject': 'رفض', 'adm.revokeVerify': 'سحب التوثيق',
   'adm.rejectReason': 'سبب الرفض (يظهر للأدمن فقط)', 'adm.approvedMsg': 'تم توثيق {name}', 'adm.rejectedMsg': 'تم تحديث حالة الطبيب',
@@ -174,8 +174,9 @@ ar: {
     <h2>3. معالجة الملفات</h2><p>لتوفير المساحة نضغط الصور والفيديو تلقائياً بجودة عالية مع الحفاظ على الأبعاد الأصلية، ونزيل من الصور بيانات الموقع الجغرافي. لا تُضغط صور الأشعة (DICOM) أبداً.</p>
     <h2>4. المشاركة</h2><p>لا يطّلع أحد على ملفاتك إلا من تشاركها معه. لكل مشاركة رابط خاص ورمز دخول ومدة صلاحية، ويمكنك إلغاؤها في أي وقت، ويُسجَّل كل وصول إليها وتستطيع الاطلاع عليه.</p>
     <h2>5. الأطباء</h2><p>نتحقق من رخصة كل طبيب قبل ظهوره للمرضى، ولا يرى الطبيب إلا الفحوصات التي شاركتها معه خلال مدة صلاحيتها.</p>
-    <h2>6. الإدارة</h2><p>يستطيع مديرو المنصة رؤية بيانات الحسابات وسجل النشاط لحماية المنصة، ولا يفتحون محتوى ملفاتك الطبية.</p>
-    <h2>7. الأمان</h2><p>حافظ على سرية كلمة المرور ورموز المشاركة، وأبلغنا فوراً عند الاشتباه بأي استخدام غير مصرح به لحسابك.</p>`,
+    <h2>6. الإدارة</h2><p>يستطيع مديرو المنصة رؤية بيانات الحسابات وسجل النشاط لحماية المنصة، ولا يفتحون محتوى ملفاتك الطبية إلا عند مراجعة ملف محذوف قبل البت فيه.</p>
+    <h2>7. الملفات المحذوفة</h2><p>عندما تحذف ملفاً يختفي من حسابك ومن كل روابط المشاركة فوراً، لكنه يُحفظ لدى إدارة المنصة ولا يُمسح نهائياً إلا بقرار منها. وكذلك الحساب المحذوف: تُحفظ ملفاته ويبقى بريده ورقم جواله محجوزين له حتى تقرر الإدارة استرجاعه أو حذفه نهائياً. لطلب الحذف النهائي تواصل مع الإدارة.</p>
+    <h2>8. الأمان</h2><p>حافظ على سرية كلمة المرور ورموز المشاركة، وأبلغنا فوراً عند الاشتباه بأي استخدام غير مصرح به لحسابك.</p>`,
 
   'f.mobile': 'رقم الجوال', 'auth.forgot': 'نسيت كلمة المرور؟',
   'otp.phoneHint': 'سيصلك رمز تحقق برسالة نصية على هذا الرقم',
@@ -227,6 +228,21 @@ ar: {
   'adm.storagePersistent': 'التخزين دائم ✓', 'adm.storageSince': 'الملفات محفوظة على القرص الدائم منذ {date}، مع نسخة احتياطية يومية من Render',
   'adm.storageTemp': 'التخزين مؤقت', 'adm.storageTempSub': 'الملفات تُحذف عند إعادة تشغيل الخادم. فعّل القرص الدائم قبل رفع ملفات حقيقية',
   'adm.diskUsed': 'المستخدم: {used} من {total}', 'adm.diskFree': 'المتاح: {free}',
+
+  'nav.trash': 'سلة المحذوفات', 'tr.sub': 'لا يُمسح أي ملف أو حساب نهائياً إلا بقرارك من هنا',
+  'tr.files': 'الملفات المحذوفة', 'tr.users': 'الحسابات المحذوفة', 'tr.owner': 'صاحب الملف', 'tr.deletedBy': 'حذفه', 'tr.deletedAt': 'تاريخ الحذف',
+  'tr.restore': 'استرجاع', 'tr.purge': 'حذف نهائي', 'tr.empty': 'لا توجد ملفات محذوفة', 'tr.emptyUsers': 'لا توجد حسابات محذوفة',
+  'tr.ownerDeleted': 'حساب صاحبه محذوف', 'tr.restored': 'تم الاسترجاع', 'tr.purged': 'تم الحذف النهائي',
+  'tr.confirmRestore': 'استرجاع «{title}» إلى حساب {name}؟ روابط المشاركة القديمة لا تعود، ويستطيع المريض مشاركته من جديد.',
+  'tr.confirmRestoreUser': 'استرجاع حساب {name} بكل ملفاته؟ يستطيع الدخول من جديد. روابط المشاركة القديمة لا تعود.',
+  'tr.purgeTitle': 'حذف نهائي', 'tr.purgeFile': 'سيُمسح «{title}» من الخادم نهائياً مع ملاحظات الأطباء عليه. لا يمكن التراجع.',
+  'tr.purgeUser': 'سيُمسح حساب {name} وكل ملفاته ({n}) ومشاركاته من الخادم نهائياً. لا يمكن التراجع.',
+  'tr.typeWord': 'للتأكيد اكتب كلمة «{word}»', 'tr.word': 'حذف', 'tr.filesN': '{n} ملف', 'tr.stat': 'في سلة المحذوفات: {f} ملف • {u} حساب • {size}',
+  'adm.movedToTrash': 'نُقل إلى سلة المحذوفات',
+  'act.file_restored': 'استرجاع ملف', 'act.file_purged': 'حذف ملف نهائياً', 'act.user_restored': 'استرجاع حساب', 'act.user_purged': 'حذف حساب نهائياً',
+  'err.account_deleted': 'هذا الحساب موقوف، تواصل مع إدارة المنصة', 'err.owner_deleted': 'حساب صاحب الملف محذوف. استرجع الحساب أولاً',
+  'err.maintenance': 'المنصة في صيانة مؤقتة، حاول لاحقاً', 'mt.banner': 'المنصة في صيانة مؤقتة: التسجيل ورفع الملفات والمشاركة متوقفة. حاول لاحقاً.',
+  'mt.adminTitle': 'وضع الصيانة مفعّل: لا يوجد قرص دائم', 'mt.adminSub': 'أوقفنا التسجيل والرفع والمشاركة حتى لا تُحفظ بيانات ستُمسح مع التحديث القادم. في Render افتح خدمة noor ← Disks وأضف قرصاً على المسار /var/data، وسيعود كل شيء تلقائياً.',
 },
 
 en: {
@@ -281,7 +297,7 @@ en: {
   'files.count': 'files', 'files.storage': 'Storage', 'files.doctorNotes': 'doctor notes',
   'files.search': 'Search by exam or center…', 'files.emptyTitle': 'No files yet', 'files.emptySub': 'Start by uploading your first exam',
   'files.noResults': 'No results', 'files.notesFrom': '{n} doctor note(s)', 'files.selected': '{n} selected',
-  'files.shareSelected': 'Share selected', 'files.confirmDelete': 'Permanently delete “{title}”? It will also be removed from all shares.',
+  'files.shareSelected': 'Share selected', 'files.confirmDelete': 'Delete “{title}”? It will be removed from your account and from all shares.',
   'files.deleted': 'File deleted',
 
   'up.title': 'Upload medical exam', 'up.drop': 'Drop files here or click to browse',
@@ -340,7 +356,7 @@ en: {
   'adm.activity14': 'Activity, last 14 days', 'adm.uploads': 'Uploads', 'adm.sharesL': 'Shares', 'adm.byCat': 'Files by category', 'adm.byKind': 'By type',
   'adm.usersPageSub': '{n} registered users', 'adm.searchUsers': 'Search by name or email', 'adm.role': 'Role', 'adm.status': 'Status',
   'adm.joined': 'Joined', 'adm.you': 'You', 'adm.suspend': 'Suspend', 'adm.activate': 'Activate',
-  'adm.confirmSuspend': 'Suspend {name}? They won’t be able to sign in.', 'adm.confirmDelete': 'Permanently delete {name} and all their files and shares?',
+  'adm.confirmSuspend': 'Suspend {name}? They won’t be able to sign in.', 'adm.confirmDelete': 'Delete {name}? They won’t be able to sign in and their share links stop working; their files are kept in the trash.',
   'adm.deleted': 'Deleted', 'adm.verifySub': 'Review doctors’ licenses before they can receive exams',
   'adm.viewLicense': 'View license', 'adm.licenseOf': 'License: {name}', 'adm.approve': 'Verify', 'adm.reject': 'Reject', 'adm.revokeVerify': 'Revoke verification',
   'adm.rejectReason': 'Reason (visible to admins only)', 'adm.approvedMsg': '{name} verified', 'adm.rejectedMsg': 'Doctor status updated',
@@ -403,8 +419,9 @@ en: {
     <h2>3. File processing</h2><p>To save space, images and videos are compressed automatically at high quality while keeping their original dimensions, and location data is removed from photos. DICOM scans are never compressed.</p>
     <h2>4. Sharing</h2><p>Only people you share with can see your files. Each share has a private link, an access code and an expiry date; you can revoke it at any time, and every access is logged for you to review.</p>
     <h2>5. Doctors</h2><p>We verify every doctor’s license before patients can find them. Doctors only see exams you share with them, while the share is active.</p>
-    <h2>6. Administration</h2><p>Platform admins can see account details and activity logs to protect the platform; they do not open your medical files.</p>
-    <h2>7. Security</h2><p>Keep your password and share codes private, and tell us immediately if you suspect unauthorized use of your account.</p>`,
+    <h2>6. Administration</h2><p>Platform admins can see account details and activity logs to protect the platform; they do not open your medical files except to review a deleted file before deciding on it.</p>
+    <h2>7. Deleted files</h2><p>When you delete a file it disappears from your account and from all share links immediately, but it is kept by the platform administration and is only erased permanently by their decision. The same applies to a deleted account: its files are kept and its email and phone number stay reserved until the administration restores or permanently deletes it. To request permanent deletion, contact the administration.</p>
+    <h2>8. Security</h2><p>Keep your password and share codes private, and tell us immediately if you suspect unauthorized use of your account.</p>`,
 
   'f.mobile': 'Mobile number', 'auth.forgot': 'Forgot password?',
   'otp.phoneHint': 'We’ll text a verification code to this number',
@@ -456,5 +473,20 @@ en: {
   'adm.storagePersistent': 'Persistent storage ✓', 'adm.storageSince': 'Files kept on the persistent disk since {date}, with daily Render snapshots',
   'adm.storageTemp': 'Temporary storage', 'adm.storageTempSub': 'Files are deleted when the server restarts. Enable a persistent disk before uploading real files',
   'adm.diskUsed': 'Used: {used} of {total}', 'adm.diskFree': 'Free: {free}',
+
+  'nav.trash': 'Trash', 'tr.sub': 'Nothing is permanently erased unless you decide so here',
+  'tr.files': 'Deleted files', 'tr.users': 'Deleted accounts', 'tr.owner': 'Owner', 'tr.deletedBy': 'Deleted by', 'tr.deletedAt': 'Deleted on',
+  'tr.restore': 'Restore', 'tr.purge': 'Delete permanently', 'tr.empty': 'No deleted files', 'tr.emptyUsers': 'No deleted accounts',
+  'tr.ownerDeleted': 'Owner account deleted', 'tr.restored': 'Restored', 'tr.purged': 'Permanently deleted',
+  'tr.confirmRestore': 'Restore “{title}” to {name}’s account? Old share links don’t come back; the patient can share it again.',
+  'tr.confirmRestoreUser': 'Restore {name}’s account with all their files? They can sign in again. Old share links don’t come back.',
+  'tr.purgeTitle': 'Delete permanently', 'tr.purgeFile': '“{title}” and doctors’ notes on it will be erased from the server. This cannot be undone.',
+  'tr.purgeUser': '{name}’s account, all their files ({n}) and shares will be erased from the server. This cannot be undone.',
+  'tr.typeWord': 'Type “{word}” to confirm', 'tr.word': 'DELETE', 'tr.filesN': '{n} files', 'tr.stat': 'In trash: {f} files • {u} accounts • {size}',
+  'adm.movedToTrash': 'Moved to trash',
+  'act.file_restored': 'File restored', 'act.file_purged': 'File permanently deleted', 'act.user_restored': 'Account restored', 'act.user_purged': 'Account permanently deleted',
+  'err.account_deleted': 'This account is suspended; contact the platform admin', 'err.owner_deleted': 'The owner’s account is deleted. Restore the account first',
+  'err.maintenance': 'The platform is under maintenance, try again later', 'mt.banner': 'Maintenance: sign-up, uploads and sharing are paused. Please try again later.',
+  'mt.adminTitle': 'Maintenance mode: no persistent disk', 'mt.adminSub': 'Sign-up, uploads and sharing are paused so no data is saved where the next update would erase it. In Render open the noor service → Disks and add a disk at /var/data; everything resumes automatically.',
 },
 };
