@@ -187,6 +187,8 @@ const upload = multer({
 // ================= المصادقة =================
 // التحقق بالجوال (Authentica) للمرضى والأطباء. الأدمن والحسابات التجريبية معفاة.
 const needsOtp = u => ['patient', 'doctor'].includes(u.role) && !u.demo;
+// الحسابات التجريبية: تعمل فقط على جهاز التطوير (أو إذا فُعّلت صراحة بـ NOOR_DEMO=1). على Render معطّلة تماماً
+const DEMO = process.env.NOOR_DEMO === '1' || (!process.env.RENDER && process.env.NOOR_DEMO !== '0');
 const phoneTaken = (phone, exceptId) => db.users.some(u => u.phone === phone && u.id !== exceptId);
 
 function otpError(res, e) {
@@ -243,7 +245,7 @@ function handleLogin(adminOnly) {
     const u = db.users.find(x => x.email === String(email || '').trim().toLowerCase());
     // الأدمن يدخل من صفحته الخاصة فقط، ولا يدخل غيره منها
     const wrongDoor = u && (adminOnly ? u.role !== 'admin' : u.role === 'admin');
-    if (!u || wrongDoor || !checkPassword(String(password || ''), u.passwordHash)) {
+    if (!u || wrongDoor || (u.demo && !DEMO) || !checkPassword(String(password || ''), u.passwordHash)) {
       log(req, u ? u.id : null, 'login_failed', { email });
       save();
       return res.status(401).json({ error: 'invalid_credentials' });
@@ -265,6 +267,19 @@ function handleLogin(adminOnly) {
   };
 }
 app.post('/api/auth/login', handleLogin(false));
+// دخول العرض التجريبي بضغطة زر (بدون كلمات مرور مكتوبة في الواجهة)
+app.post('/api/auth/demo', (req, res) => {
+  if (!DEMO) return res.status(404).json({ error: 'not_found' });
+  const role = req.body?.role;
+  const u = role === 'admin'
+    ? db.users.find(x => x.role === 'admin' && x.email === 'admin@noor.app' && x.status === 'active')
+    : db.users.find(x => x.demo && x.role === role && x.status === 'active' && (role !== 'doctor' || x.doctor?.verification === 'approved'));
+  if (!u) return res.status(404).json({ error: 'not_found' });
+  startSession(res, u);
+  log(req, u.id, role === 'admin' ? 'admin_login' : 'login', { demo: true });
+  save();
+  res.json({ user: publicUser(u) });
+});
 app.post('/api/admin/login', handleLogin(true));
 
 // إضافة رقم جوال لحساب قديم أثناء الدخول
@@ -367,7 +382,7 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/auth/me', (req, res) => res.json({ user: publicUser(req.user), otpDevMode: otp.DEV_MODE, maintenance: MAINTENANCE }));
+app.get('/api/auth/me', (req, res) => res.json({ user: publicUser(req.user), otpDevMode: otp.DEV_MODE, maintenance: MAINTENANCE, demo: DEMO }));
 
 app.patch('/api/auth/me', auth(), (req, res) => {
   const { name, currentPassword, newPassword } = req.body || {};
@@ -918,6 +933,22 @@ app.use((err, req, res, next) => {
 });
 
 store.ensureSeed(hashPassword);
+const dropSessionsOf = ids => {
+  let n = 0;
+  for (const k of Object.keys(db.sessions)) if (ids.has(db.sessions[k].userId)) { Reflect.deleteProperty(db.sessions, k); n++; }
+  return n;
+};
+// كلمة مرور الأدمن من إعدادات Render (NOOR_ADMIN_PASSWORD): تُطبَّق عند كل تشغيل إذا تغيّرت
+if (process.env.NOOR_ADMIN_PASSWORD) {
+  const a = db.users.find(u => u.role === 'admin' && u.email === (process.env.NOOR_ADMIN_EMAIL || 'admin@noor.app').toLowerCase());
+  if (a && !checkPassword(process.env.NOOR_ADMIN_PASSWORD, a.passwordHash)) {
+    a.passwordHash = hashPassword(process.env.NOOR_ADMIN_PASSWORD);
+    dropSessionsOf(new Set([a.id]));
+    save(); console.log('🔑 تم تحديث كلمة مرور الأدمن من الإعدادات.');
+  }
+}
+// الحسابات التجريبية معطّلة على الخادم الحقيقي: نُخرج من كان داخلاً بها
+if (!DEMO && dropSessionsOf(new Set(db.users.filter(u => u.demo).map(u => u.id)))) save();
 // تحويل الأشعة المحفوظة بالشكل القديم (بطاقة لكل سلسلة) إلى دراسات
 if (studies.migrate(db, n => media.readDicomMeta(storedPath(n)))) { save(); console.log('تم تجميع الأشعة السابقة في دراسات.'); }
 {

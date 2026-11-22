@@ -312,12 +312,11 @@ function renderAuth(isRegister) {
         <button class="btn btn-primary btn-block btn-lg" type="submit">${isRegister ? t('auth.register') : t('auth.login')}</button>
         <p class="auth-switch">${isRegister ? t('auth.haveAccount') : t('auth.noAccount')}
           <a href="#${isRegister ? '/login' : '/register'}">${isRegister ? t('auth.login') : t('auth.register')}</a></p>
-        ${!isRegister ? `
+        ${!isRegister && state.demo ? `
         <div class="demo-box">
           <b>${t('auth.demo')}</b>
           <div class="demo-grid">
-            ${[['patient', 'patient@noor.app', 'Patient@1234'], ['doctor', 'doctor@noor.app', 'Doctor@1234']].map(([r, e, p]) =>
-              `<button type="button" class="demo-btn" data-email="${e}" data-pass="${p}">${t('role.' + r)}</button>`).join('')}
+            ${['patient', 'doctor'].map(r => `<button type="button" class="demo-btn" data-role="${r}">${t('role.' + r)}</button>`).join('')}
           </div>
         </div>` : ''}
       </form>
@@ -334,8 +333,9 @@ function renderAuth(isRegister) {
       $('#doctor-fields').hidden = form.role.value !== 'doctor';
     }));
   }
-  $$('.demo-btn', form).forEach(b => b.onclick = () => {
-    form.email.value = b.dataset.email; form.password.value = b.dataset.pass; form.requestSubmit();
+  $$('.demo-btn', form).forEach(b => b.onclick = async () => {
+    try { signedIn(await api('/api/auth/demo', { method: 'POST', body: { role: b.dataset.role } })); }
+    catch (ex) { const err = $('#auth-err'); err.textContent = errMsg(ex); err.hidden = false; }
   });
   form.onsubmit = async e => {
     e.preventDefault();
@@ -507,12 +507,16 @@ function renderAdminLogin() {
       <label class="field"><span>${t('adminLogin.password')}</span><input name="password" type="password" required autocomplete="current-password" dir="ltr"></label>
       <div class="form-error" id="adm-err" hidden></div>
       <button class="btn btn-gold btn-block btn-lg" type="submit">${icon('shield')} ${t('adminLogin.submit')}</button>
-      <button type="button" class="admin-demo" id="adm-demo">${t('adminLogin.demo')}</button>
+      ${state.demo ? `<button type="button" class="admin-demo" id="adm-demo">${t('adminLogin.demo')}</button>` : ''}
       <a class="admin-back" href="/">${t('adminLogin.back')}</a>
     </form>
   </div>`;
   const form = $('#adm-form');
-  $('#adm-demo').onclick = () => { form.email.value = 'admin@noor.app'; form.password.value = 'Admin@1234'; form.requestSubmit(); };
+  const demoBtn = $('#adm-demo');
+  if (demoBtn) demoBtn.onclick = async () => {
+    try { const { user } = await api('/api/auth/demo', { method: 'POST', body: { role: 'admin' } }); state.user = user; toast(t('auth.welcome', { name: user.name })); go('/overview'); }
+    catch (ex) { const err = $('#adm-err'); err.textContent = errMsg(ex); err.hidden = false; }
+  };
   form.onsubmit = async e => {
     e.preventDefault();
     const err = $('#adm-err'); err.hidden = true;
@@ -1925,7 +1929,7 @@ async function renderSharePage(token) {
 (async () => {
   try {
     const me = await api('/api/auth/me');
-    state.user = me.user;
+    state.user = me.user; state.demo = !!me.demo;
     // قفل الأمان: شريط ظاهر للجميع عندما تكون المنصة في وضع الصيانة
     if (me.maintenance) {
       const bar = document.createElement('div');
