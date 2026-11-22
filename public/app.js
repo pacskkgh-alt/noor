@@ -1497,6 +1497,7 @@ async function viewAdminOverview(el) {
         ['hospital', s.centers, 'adm.centers', '']].map(([ic, v, k, sub]) => `
         <div class="stat"><span class="stat-ic">${icon(ic)}</span><div><b>${v}</b><span>${t(k)}</span>${sub ? `<small>${sub}</small>` : ''}</div></div>`).join('')}
     </div>
+    ${storageCard(s)}
     <div class="grid-2 cards-2">
       <div class="card">
         <div class="card-head"><h3>${t('adm.activity14')}</h3><div class="legend"><span><i class="lg-up"></i>${t('adm.uploads')}</span><span><i class="lg-sh"></i>${t('adm.sharesL')}</span></div></div>
@@ -1515,6 +1516,22 @@ async function viewAdminOverview(el) {
         <div class="kind-tags">${['pdf', 'image', 'dicom', 'video'].map(k => `<span class="tag">${icon(kindIcon(k))} ${t('kind.' + k)}: <b>${s.byKind[k] || 0}</b></span>`).join('')}</div>
       </div>
     </div>`;
+}
+
+// حالة التخزين: دائم أم مؤقت، والمساحة المستخدمة والمتاحة
+function storageCard(s) {
+  const st = s.storageInfo || {};
+  const used = st.total ? st.total - st.free : 0;
+  const pct = st.total ? Math.round(used / st.total * 100) : 0;
+  return `<div class="card storage-card ${st.persistent ? 'ok' : 'warn'}">
+    <div class="storage-head">
+      <span class="stat-ic">${icon(st.persistent ? 'shield' : 'alert')}</span>
+      <div><b>${st.persistent ? t('adm.storagePersistent') : t('adm.storageTemp')}</b>
+        <small class="muted">${st.persistent ? t('adm.storageSince', { date: fmtDate(st.since, true) }) : t('adm.storageTempSub')}</small></div>
+    </div>
+    ${st.total ? `<div class="storage-bar"><i style="width:${pct}%"></i></div>
+      <div class="storage-nums"><span>${t('adm.diskUsed', { used: fmtSize(used), total: fmtSize(st.total) })}</span><span>${t('adm.diskFree', { free: fmtSize(st.free) })}</span></div>` : ''}
+  </div>`;
 }
 
 async function viewAdminUsers(el) {

@@ -669,6 +669,13 @@ app.get('/api/doctor/inbox', auth('doctor'), (req, res) => {
 // ================= الأدمن =================
 const admin = auth('admin');
 
+function diskInfo() {
+  try {
+    const st = fs.statfsSync(store.DATA);
+    return { total: st.blocks * st.bsize, free: st.bavail * st.bsize };
+  } catch { return {}; }
+}
+
 app.get('/api/admin/stats', admin, (req, res) => {
   const byRole = r => db.users.filter(u => u.role === r).length;
   const byCat = {};
@@ -692,6 +699,7 @@ app.get('/api/admin/stats', admin, (req, res) => {
     shares: db.shares.length, activeShares: db.shares.filter(shareActive).length,
     shareViews: db.shares.reduce((a, s) => a + (s.accessLog || []).length, 0),
     centers: db.centers.length, byCat, byKind, days,
+    storageInfo: { persistent: store.PERSISTENT, since: store.DATA_SINCE, ...diskInfo() },
   });
 });
 

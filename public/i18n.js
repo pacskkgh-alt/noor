@@ -223,6 +223,10 @@ ar: {
   'files.studyLabel': '{mod} • {s} سلاسل • {n} صورة', 'files.studyLabel1': '{mod} • {n} صورة',
   'viewer.report': 'التقرير', 'viewer.seriesList': 'سلاسل الدراسة', 'viewer.images': '{n} صورة',
   'viewer.dragHint': 'اضغط على سلسلة لعرضها، أو اسحبها إلى أي شاشة عند التقسيم',
+
+  'adm.storagePersistent': 'التخزين دائم ✓', 'adm.storageSince': 'الملفات محفوظة على القرص الدائم منذ {date}، مع نسخة احتياطية يومية من Render',
+  'adm.storageTemp': 'التخزين مؤقت', 'adm.storageTempSub': 'الملفات تُحذف عند إعادة تشغيل الخادم. فعّل القرص الدائم قبل رفع ملفات حقيقية',
+  'adm.diskUsed': 'المستخدم: {used} من {total}', 'adm.diskFree': 'المتاح: {free}',
 },
 
 en: {
@@ -448,5 +452,9 @@ en: {
   'files.studyLabel': '{mod} • {s} series • {n} images', 'files.studyLabel1': '{mod} • {n} images',
   'viewer.report': 'Report', 'viewer.seriesList': 'Study series', 'viewer.images': '{n} images',
   'viewer.dragHint': 'Click a series to view it, or drag it onto any view in split screen',
+
+  'adm.storagePersistent': 'Persistent storage ✓', 'adm.storageSince': 'Files kept on the persistent disk since {date}, with daily Render snapshots',
+  'adm.storageTemp': 'Temporary storage', 'adm.storageTempSub': 'Files are deleted when the server restarts. Enable a persistent disk before uploading real files',
+  'adm.diskUsed': 'Used: {used} of {total}', 'adm.diskFree': 'Free: {free}',
 },
 };
