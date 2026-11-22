@@ -2,11 +2,17 @@ services:
   - type: web
     name: noor
     runtime: node
-    # الخطوة 1 من 2: الترقية لخطة مدفوعة (الأقراص الدائمة غير متاحة في الخطة المجانية)
-    # الخطوة 2 (بعد نجاح الترقية): إضافة قرص دائم 10GB على /var/data والمتغيّر NOOR_DATA=/var/data
+    # خطة مدفوعة لأن الأقراص الدائمة غير متاحة في الخطة المجانية
     plan: starter
     buildCommand: npm install
     startCommand: npm start
+    # قرص دائم: قاعدة البيانات والملفات المرفوعة تبقى مع التحديثات وإعادة التشغيل (نسخة احتياطية يومية من Render)
+    disk:
+      name: noor-data
+      mountPath: /var/data
+      sizeGB: 10
     envVars:
+      - key: NOOR_DATA
+        value: /var/data
       - key: AUTHENTICA_API_KEY
         sync: false
