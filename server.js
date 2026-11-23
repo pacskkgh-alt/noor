@@ -148,8 +148,13 @@ async function runVideoQueue() {
 }
 
 // ---------- الجلسات ----------
+// تطبيق الجوال يرسل الجلسة في ترويسة Authorization: Bearer بدل الكوكي
+const sidOf = req => {
+  const h = String(req.headers.authorization || '');
+  return h.startsWith('Bearer ') ? h.slice(7).trim() : parseCookies(req).noor_sid;
+};
 app.use((req, res, next) => {
-  const sid = parseCookies(req).noor_sid;
+  const sid = sidOf(req);
   const s = sid && db.sessions[sid];
   if (s && new Date(s.expires) > new Date()) {
     const u = db.users.find(x => x.id === s.userId);
@@ -168,7 +173,12 @@ function startSession(res, user) {
   const sid = crypto.randomBytes(32).toString('hex');
   db.sessions[sid] = { userId: user.id, expires: new Date(Date.now() + SESSION_DAYS * 864e5).toISOString() };
   res.setHeader('Set-Cookie', `noor_sid=${sid}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${SESSION_DAYS * 86400}`);
+  // تطبيق الجوال يقرأ رمز الجلسة من الترويسة (المتصفح لا يحتاجه لأن الكوكي HttpOnly)
+  if (res.req && res.req.headers['x-noor-client'] === 'app') res.setHeader('X-Noor-Token', sid);
+  return sid;
 }
+// تذكرة قصيرة العمر لفتح صفحة من الموقع داخل التطبيق (مثل عارض الأشعة) بنفس الحساب
+const webTickets = new Map();
 
 // ---------- رفع الملفات ----------
 const upload = multer({
@@ -374,8 +384,28 @@ app.post('/api/auth/otp/verify', (req, res) => {
   res.json({ user: publicUser(u) });
 });
 
+app.post('/api/auth/web-ticket', auth(), (req, res) => {
+  const ticket = crypto.randomBytes(24).toString('base64url');
+  webTickets.set(ticket, { userId: req.user.id, exp: Date.now() + 60e3 });
+  for (const [k, v] of webTickets) if (v.exp < Date.now()) webTickets.delete(k);
+  res.json({ ticket });
+});
+// يفتح التطبيق: /m/open?ticket=..&to=/m/view/ID — تُستهلك التذكرة مرة واحدة وتُنشأ جلسة كوكي للصفحة
+app.get('/m/open', (req, res) => {
+  const t = webTickets.get(String(req.query.ticket || ''));
+  webTickets.delete(String(req.query.ticket || ''));
+  const to = String(req.query.to || '');
+  const u = t && t.exp > Date.now() && db.users.find(x => x.id === t.userId && x.status === 'active');
+  // مسموح فقط: عارض الأشعة، أو فتح ملف (PDF/فيديو) في متصفح الجوال
+  if (!u || !/^\/m\/view\/[\w-]+$|^\/api\/files\/[\w-]+\/content$/.test(to)) return res.status(403).send('Link expired');
+  startSession(res, u);
+  save();
+  res.redirect(to);
+});
+app.get('/m/view/:id', (req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
+
 app.post('/api/auth/logout', (req, res) => {
-  const sid = parseCookies(req).noor_sid;
+  const sid = sidOf(req);
   if (sid) delete db.sessions[sid];
   res.setHeader('Set-Cookie', 'noor_sid=; HttpOnly; Path=/; Max-Age=0');
   save();
@@ -443,6 +473,11 @@ app.post('/api/files', auth('patient'), upload.fields([{ name: 'files', maxCount
       } else singles.push({ f, kind });
     }
 
+    // من تطبيق الجوال: تقارير PDF المرفوعة مع صور الأشعة في نفس الطلب تُرفق بالدراسة بدل بطاقة منفصلة
+    if (req.body.attachPdfToStudy === '1' && dicoms.length) {
+      for (const x of singles.filter(x => x.kind === 'pdf')) attachFiles.push(x.f);
+      for (let i = singles.length - 1; i >= 0; i--) if (singles[i].kind === 'pdf') singles.splice(i, 1);
+    }
     const now = new Date().toISOString();
     const cat = ['imaging', 'lab', 'report', 'prescription', 'other'].includes(category) ? category : 'other';
     const total = singles.length + (dicoms.length ? 1 : 0);
@@ -519,6 +554,12 @@ app.delete('/api/files/:id', auth('patient'), (req, res) => {
   log(req, req.user.id, 'file_deleted', { fileId: f.id, title: f.title });
   save();
   res.json({ ok: true });
+});
+
+app.get('/api/files/:id', auth(), (req, res) => {
+  const f = db.files.find(x => x.id === req.params.id);
+  if (!canAccessFile(req.user, f)) return res.status(404).json({ error: 'not_found' });
+  res.json({ file: fileWithExtras(f), own: f.ownerId === req.user.id });
 });
 
 app.get('/api/files/:id/content', auth(), (req, res) => {
@@ -692,7 +733,7 @@ app.get('/api/doctor/inbox', auth('doctor'), (req, res) => {
     const files = s.fileIds.map(liveFile).filter(Boolean)
       .map(f => ({ ...fileWithExtras(f), myNotes: db.notes.filter(n => n.fileId === f.id && n.doctorId === req.user.id).length }));
     return { id: s.id, patientName: owner?.name || '—', patientEmail: owner?.email, message: s.message, createdAt: s.createdAt, expiresAt: s.expiresAt, files };
-  });
+  }).filter(s => s.files.length); // مشاركة حُذفت كل ملفاتها لا تظهر للطبيب
   res.json({ shares });
 });
 

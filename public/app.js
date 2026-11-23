@@ -189,6 +189,8 @@ async function render() {
   document.documentElement.dir = state.lang === 'ar' ? 'rtl' : 'ltr';
   const m = location.pathname.match(/^\/s\/([\w-]+)/);
   if (m) return renderSharePage(m[1]);
+  const mv = location.pathname.match(/^\/m\/view\/([\w-]+)/);
+  if (mv) return renderEmbeddedViewer(mv[1]);
 
   const route = location.hash.slice(1) || '/';
   if (isAdminPath()) {
@@ -1851,6 +1853,23 @@ async function viewAdminTrash(el) {
       await reload();
     } catch (ex) { toast(errMsg(ex), 'err'); }
   };
+}
+
+// ============ العارض داخل تطبيق الجوال (WebView) ============
+async function renderEmbeddedViewer(id) {
+  document.body.classList.add('embedded');
+  $('#app').innerHTML = `<div class="loading"><span class="spinner"></span></div>`;
+  const back = () => { if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage('close'); else history.back(); };
+  try {
+    const { file, own } = await api('/api/files/' + id);
+    $('#app').innerHTML = '';
+    openFileViewer(file, { url: `/api/files/${id}/content`, notes: !own || file.notesCount > 0, canDownload: false, doctorMode: !own,
+      viewerMode: own ? 'simple' : 'full' });
+    const root = $('#modal-root');
+    root._onClose = back;
+  } catch (e) {
+    $('#app').innerHTML = `<div class="empty">${icon('alert')}<p>${esc(errMsg(e))}</p></div>`;
+  }
 }
 
 // ============ صفحة المشاركة العامة ============
