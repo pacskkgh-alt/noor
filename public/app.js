@@ -939,7 +939,10 @@ async function openUploadModal(onDone) {
       }
       if (isCd) {
         const st = dicomItem();
-        if (kind === 'pdf') { st.attachments.push(f); st.size += f.size; } else st.ignored++;
+        // تقارير الأشعة فقط: نتجاهل أدلة برنامج العرض المرفق بالقرص (Manual, Help, License...)
+        const where = (f.webkitRelativePath || f.relPath || f.name || '').toLowerCase();
+        const manual = /manual|help|licen[cs]e|readme|guide|eula|install|handbuch|viewer|instruction|copyright|third.?party/.test(where);
+        if (kind === 'pdf' && !manual) { st.attachments.push(f); st.size += f.size; } else st.ignored++;
         continue;
       }
       const it = { id: ++seq, kind, files: [f], name: f.name, size: f.size, state: kind ? 'ready' : 'skip', note: kind ? '' : t('up.unsupported') };
@@ -992,17 +995,23 @@ async function openUploadModal(onDone) {
   // يرفع عنصراً (ملف عادي = طلب واحد، دراسة أشعة = دفعات متتالية مع إعادة المحاولة عند انقطاع الاتصال)
   async function send(it, meta) {
     const batches = it.kind === 'dicom' ? makeBatches(it.files) : [it.files];
+    // تقارير القرص تُوزَّع على الدفعات (10 في كل طلب) بدل إرسالها كلها مع أول دفعة
+    const attChunks = [];
+    for (let i = 0; i < (it.attachments || []).length; i += 10) attChunks.push(it.attachments.slice(i, i + 10));
+    const steps = Math.max(batches.length, attChunks.length);
     const total = bytesOf(it.files) + bytesOf(it.attachments) || 1;
     let sentBytes = 0, sentFiles = 0;
     const results = [], skipped = [];
-    for (let b = 0; b < batches.length; b++) {
-      const files = batches[b];
-      const att = b === 0 ? (it.attachments || []) : [];
+    for (let b = 0; b < steps; b++) {
+      const files = batches[b] || [];
+      const att = attChunks[b] || [];
+      // طلب فيه تقارير فقط: نرفقها بالدراسة التي أُنشئت في الدفعات السابقة
+      const m2 = files.length || !it.studyId ? meta : { ...meta, studyId: it.studyId };
       const batchBytes = bytesOf(files) + bytesOf(att);
       let r;
       for (let attempt = 0; attempt < 4; attempt++) {
         if (attempt) { it.progressText = t('up.retrying', { n: attempt }); setPct(it, it.pct); await sleep(2000 * 2 ** (attempt - 1)); }
-        r = await post(files, att, meta, (loaded, tot) => {
+        r = await post(files, att, m2, (loaded, tot) => {
           it.progressText = batches.length > 1 ? t('up.batchProgress', { done: sentFiles + Math.round(files.length * loaded / tot), total: it.files.length }) : '';
           setPct(it, Math.min(100, Math.round((sentBytes + batchBytes * loaded / tot) / total * 100)));
         });
@@ -1010,11 +1019,14 @@ async function openUploadModal(onDone) {
       }
       if (!r.ok) {
         it.remaining = batches.slice(b).flat();
-        it.remainingAttachments = att;
+        it.remainingAttachments = attChunks.slice(b).flat();
+        if (r.data && r.data.detail) console.warn('upload rejected:', r.data.detail);
         return { ok: false, data: r.data, results, skipped, uploadedFiles: sentFiles };
       }
       sentBytes += batchBytes;
       sentFiles += files.length;
+      const study = (r.data.files || []).find(x => x.kind === 'dicom');
+      if (study && !it.studyId) it.studyId = study.id;
       results.push(...(r.data.files || []));
       skipped.push(...(r.data.skipped || []));
       if (!state.user.termsAcceptedAt) state.user.termsAcceptedAt = new Date().toISOString();
@@ -1028,7 +1040,7 @@ async function openUploadModal(onDone) {
     if (finished) return closeModal();
     const err = $('#up-err', m); err.hidden = true;
     // إعادة المحاولة: ما بقي من الدفعات التي لم تُرفع
-    items.filter(i => i.state === 'error' && i.remaining && i.remaining.length).forEach(i => {
+    items.filter(i => i.state === 'error' && ((i.remaining && i.remaining.length) || (i.remainingAttachments && i.remainingAttachments.length))).forEach(i => {
       i.files = i.remaining; i.attachments = i.remainingAttachments || []; i.state = 'ready'; i.note = '';
     });
     const todo = validItems().filter(i => i.state === 'ready');
@@ -1074,7 +1086,7 @@ async function openUploadModal(onDone) {
     }
     busy = false;
     const ok = todo.filter(i => i.state === 'done').length;
-    const canRetry = todo.some(i => i.state === 'error' && i.remaining && i.remaining.length);
+    const canRetry = todo.some(i => i.state === 'error' && ((i.remaining && i.remaining.length) || (i.remainingAttachments && i.remainingAttachments.length)));
     finished = !canRetry;
     const summary = $('#summary', m);
     summary.hidden = false;

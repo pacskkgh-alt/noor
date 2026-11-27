@@ -448,7 +448,7 @@ app.get('/api/files', auth('patient'), (req, res) => {
 
 // الرفع: الملفات العادية بطاقة لكل ملف، وصور الأشعة تُجمع حسب الدراسة (وتُدمج مع الدراسة نفسها إن رُفعت سابقاً)
 // الأقراص الكبيرة تُرفع على دفعات؛ كل دفعة تُضاف لنفس الدراسة تلقائياً. حقل attachments: تقارير PDF من القرص تُرفق بالدراسة
-app.post('/api/files', auth('patient'), upload.fields([{ name: 'files', maxCount: 3000 }, { name: 'attachments', maxCount: 20 }]), async (req, res, next) => {
+app.post('/api/files', auth('patient'), upload.fields([{ name: 'files', maxCount: 3000 }, { name: 'attachments', maxCount: 200 }]), async (req, res, next) => {
   const uploaded = req.files?.files || [];
   const attachFiles = req.files?.attachments || [];
   const all = [...uploaded, ...attachFiles];
@@ -968,7 +968,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get(['/s/:token', '/', '/admin', '/admin/'], (req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
 
 app.use((err, req, res, next) => {
-  if (err instanceof multer.MulterError) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'file_too_large' : 'upload_error' });
+  if (err instanceof multer.MulterError) {
+    console.warn('upload rejected:', err.code, err.field || '');
+    return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'file_too_large' : 'upload_error', detail: err.code });
+  }
   console.error(err);
   res.status(500).json({ error: 'server_error' });
 });
